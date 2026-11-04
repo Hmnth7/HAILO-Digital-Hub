@@ -1,6 +1,6 @@
-# HAILO Digital Hub – Smart Waste Management System
+# HAILO Digital Hub – Smart Waste Management and Monitoring System
 
-> **College Design Project – Municipal IoT Dustbin Telemetry & Citizen Grievance Portal**
+> **College Design Project – Municipal IoT Dustbin Telemetry, Permanent QR Placard System & Citizen Grievance Portal**
 
 HAILO Digital Hub is a production-grade smart waste-management web platform designed for municipal and university campus operations. It bridges physical ultrasonic hardware sensors, dynamic QR-code-based citizen reporting, and automated municipal dispatch workflows.
 
@@ -8,8 +8,13 @@ HAILO Digital Hub is a production-grade smart waste-management web platform desi
 
 ## 🌟 Key System Capabilities
 
-1. **Smart Dustbin Fleet Monitoring (50 Bins)**
-   - Pre-mapped network of 50 unique smart bins (`BIN-A001` through `BIN-A050`) across academic blocks, cafeterias, hostels, sports complexes, and walkways.
+1. **Permanent 5-Dustbin Smart Fleet & Physical Placards**
+   - Five permanently registered municipal dustbins:
+     - `BIN-001`: Main Block (Academic Zone)
+     - `BIN-002`: Cafeteria (Dining Zone)
+     - `BIN-003`: Hostel (Residential Zone)
+     - `BIN-004`: Library (Academic Zone)
+     - `BIN-005`: Sports Complex (Athletics Zone)
    - Status logic based on live fill percentage:
      - `0–59%`: **NORMAL** 🟢
      - `60–79%`: **NORMAL / APPROACHING FULL** 🟢
@@ -17,46 +22,42 @@ HAILO Digital Hub is a production-grade smart waste-management web platform desi
      - `95–99%`: **FULL** (Immediate collection alert) 🔴
      - `100%`: **OVERFLOW** (Critical hazard alarm) ⚠️
 
-2. **Cryptographic QR Placard & Citizen Mobile Reporting**
-   - Each dustbin has a permanent QR code encoding a dynamic URL (e.g. `/report/BIN-A002`).
-   - When a citizen scans the QR code with their smartphone, the incident form **automatically resolves the Bin ID and physical location** without requiring manual typing.
-   - Citizens choose from 8 problem categories (Overflow, Bad Smell, Leakage, Damaged Bin, Hazardous Waste, etc.), attach photos with live preview, and submit without login friction.
-   - Generates an immediate tracking complaint ID (e.g., `CMP-1024`) with celebratory confirmation.
+2. **Permanent QR Placard & Citizen Mobile Reporting**
+   - Each dustbin has a permanent QR code pointing to its own reporting page:
+     - `/report/BIN-001`
+     - `/report/BIN-002`
+     - `/report/BIN-003`
+     - `/report/BIN-004`
+     - `/report/BIN-005`
+   - Configurable public HTTPS base URL ensuring phone cameras scanning on cellular networks reach the interface.
+   - When a citizen scans a QR code with their mobile phone:
+     - Auto-identifies the Bin ID and physical location with zero manual selection required.
+     - Displays read-only placards.
+     - Citizens choose from standardized issue categories: *Overflowing Waste*, *Bad Smell*, *Damaged Dustbin*, *Waste Leakage*, *Scattered Waste*, *Bin is Full*, *Needs Cleaning*, *Other*.
+     - Optional photographic evidence upload and incident description.
+     - Submitting creates a unique tracking complaint ID (`CMP-xxx`) and immediately routes to confirmation.
+   - Route separation: `/report` provides options for camera scan or manual bin selection, while `/report/BIN-00X` directly opens the specific bin's form.
 
-3. **Admin Operations Dashboard**
-   - **4 Major Stat Cards**: Total Waste (200 Ltr), Recyclable Waste (160 Ltr: Bio/Paper/Plastic), Non-Recyclable (40 Ltr), Active Complaints (12) with trend indicators.
-   - **Bin Filling Detection Card**: Visualizes "Number of times bins reached 80% full" (23 times this month), category bars (Bio 80/120L, Paper 80/100L, Plastic 80/80L, Rest 15/60L), and advisory warnings.
-   - **Waste Trend Chart**: Interactive 12-month Recharts volume breakdown with multi-metric hover inspection.
-   - **Recent Complaints Feed**: Real-time triage table linked to QR submissions.
+3. **QR Management & Placard Generation Desk**
+   - 5 Individual cards showing QR code, Bin ID, location, active/inactive badge, reporting URL, and test link.
+   - **Active/Inactive Status Toggle**: Admins can temporarily pause reporting for dustbins under maintenance. Inactive dustbins display a prominent notice on citizen reporting forms and safely block submissions.
+   - **Download PNG**: High-resolution 1000x1200 sticker image with HAILO DIGITAL HUB branding, "SCAN TO REPORT WASTE ISSUES", QR code, Bin ID, and location.
+   - **Download SVG**: Crisp vector placard graphic.
+   - **Download All 5 (ZIP)**: Packages all 5 high-res PNG stickers, vector SVGs, and README installation guide.
+   - **Printable A4 Sheet / PDF**: ISO standard A4 sheet containing all 5 placards with dashed scissor cut lines (✂) and municipal installation guide.
 
-4. **Interactive IoT Hardware Simulation Testbench**
-   - Simulates an **ESP32 microcontroller** paired with an **HC-SR04 ultrasonic distance sensor**.
-   - Real-time diagnostic readouts: Microcontroller status, 40kHz ultrasound status, live seconds heartbeat, ultrasonic distance (cm), and calculated fill percentage.
-   - Interactive **Fill-Level Slider (0% to 100%)**: Dragging the slider dynamically updates target bins across the Dashboard, Monitoring Grid, and Bin Details page.
-   - Presentation Quick Triggers: "Trigger Overflow", "New Citizen Report", "Auto-Resolve", "Empty Bin".
+4. **Cleaning Staff Assignment & Grievance Resolution Workflow**
+   - Admin manages full triage from Admin Dashboard:
+     - Review, accept, or reject complaints.
+     - Assign complaints to registered cleaning staff members (`Ramesh Kumar`, `Suresh Patel`, `Priya Sharma`, `Sunita Verma`, `Amit Singh`).
+     - Real-time status progression: `PENDING` → `ACCEPTED` → `ASSIGNED` → `IN PROGRESS` → `RESOLVED`.
+     - Mandatory before/after cleaning photo verification prior to marking complaints resolved.
+     - Synchronized updates across Admin Dashboard, Customer Portal (`My Reports`), and Activity Log.
 
-5. **Operational Modules**
-   - **QR Management**: Grid of 50 scannable QR placards with single SVG download and batch printable sticker sheet.
-   - **Collection Planner**: Smart dispatch queue for EV waste carts and compact tippers.
-   - **Analytics**: Deep-dive diversion charts, status distribution pie charts, and category frequencies.
-   - **Stakeholder Feedback**: 5-star community rating submission and manager review desk.
-   - **Settings**: System thresholds, sound alarms, and one-click demo data reset.
-
----
-
-## 🚀 Presentation Demo Flow (Step-by-Step for Evaluators)
-
-| Step | Action | Expected Output |
-|------|--------|-----------------|
-| **1** | Open Admin Dashboard (`/dashboard`) | View Total Waste (200 Ltr), Recyclables (160 Ltr), 80% Threshold count (23x), and Waste Trends. |
-| **2** | Open Bin Monitoring (`/bins`) | Inspect 50 smart bins. Select `BIN-A002` (Block B, 94% Full). |
-| **3** | Open QR Management (`/qr-management`) | View QR code for `BIN-A002`. Click **Scan / Test Complaint Page**. |
-| **4** | Citizen Form Opens (`/report/BIN-A002`) | Notice `BIN-A002` and `Block B – Ground Floor Lobby` are **pre-filled automatically**. |
-| **5** | Submit Incident Report | Select *Overflowing waste*, observe demo photo preview, click **Submit Report**. |
-| **6** | Complaint Confirmation (`/report/success/CMP-...`) | View generated Complaint ID, status `Pending`, and confetti celebration. |
-| **7** | Return to Admin Dashboard | Confirm the new complaint immediately appears at the top of the complaints queue. |
-| **8** | Change Complaint Status | Transition incident: `Pending` → `In Progress` → `Resolved`. |
-| **9** | IoT Hardware Simulation | Open **IoT Simulator**, adjust the slider to 100% to demonstrate real-time overflow sensor alert! |
+5. **Operations Dashboard & Hardware Telemetry**
+   - Stat cards for total waste, recyclables, active complaints, and threshold alerts.
+   - Interactive IoT hardware testbench simulating ESP32 microcontroller with HC-SR04 ultrasonic sensor.
+   - Dynamic fill-level slider and automated EV rover dispatch triggers.
 
 ---
 
@@ -65,7 +66,8 @@ HAILO Digital Hub is a production-grade smart waste-management web platform desi
 - **Frontend**: React 18, TypeScript, Vite
 - **Styling**: Tailwind CSS, Lucide React Icons
 - **Data Visualization**: Recharts (Interactive Area, Bar, Line, and Pie charts)
-- **QR Generation**: `qrcode.react` (High-res SVG and PNG QR rendering)
+- **QR Generation**: `qrcode.react` (High-res SVG and Canvas QR rendering)
+- **Zero-Dependency Document Generators**: Native browser Canvas-to-JPEG PDF 1.4 compiler and PKWARE ZIP archive builder
 - **Delight & Feedback**: `canvas-confetti`
 - **State & Storage**: Reactive React Context with localStorage persistence
 
