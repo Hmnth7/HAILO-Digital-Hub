@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import { useRouter } from './router/Router';
 import { useApp } from './context/AppContext';
 import { AdminSidebar } from './components/AdminSidebar';
@@ -37,12 +38,29 @@ import { BinIdentificationPage } from './pages/BinIdentificationPage';
 
 export const App: React.FC = () => {
   const { currentPath, params, navigate } = useRouter();
-  const { currentUser, isAuthenticated, isAdmin, isCustomer, bins } = useApp();
+  const { currentUser, authLoading, isAuthenticated, isAdmin, isCustomer, bins } = useApp();
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [hardwareSimModalOpen, setHardwareSimModalOpen] = useState(false);
 
-  // 1. Public Citizen QR routes (Do NOT require login)
+  // 1. Loading Authentication State (Prevents flash of protected content / access denied)
+  if (authLoading) {
+    return (
+      <main className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-lg animate-pulse">
+            <Trash2 className="w-6 h-6 stroke-[2.2]" />
+          </div>
+          <div>
+            <h3 className="text-sm font-extrabold text-slate-800">HAILO Digital Hub</h3>
+            <p className="text-xs text-slate-500 font-medium">Verifying security credentials...</p>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // 2. Public Citizen QR Success Receipt (Can be viewed after report submission)
   if (currentPath.startsWith('/report/success')) {
     return (
       <main className="min-h-screen bg-slate-50">
@@ -52,6 +70,22 @@ export const App: React.FC = () => {
     );
   }
 
+  // 3. Unauthenticated Users: Redirect to Login/Registration and preserve scanned bin return URL (e.g. /report/BIN-002)
+  if (!isAuthenticated || currentPath === '/login') {
+    if (currentPath.startsWith('/report') && typeof window !== 'undefined') {
+      try {
+        sessionStorage.setItem('hailo_return_to', currentPath);
+      } catch {}
+    }
+    return (
+      <main className="min-h-screen bg-slate-50">
+        <ToastContainer />
+        <LoginPage />
+      </main>
+    );
+  }
+
+  // 4. Authenticated Citizen Incident Report
   if (currentPath.startsWith('/report')) {
     if (params.binCode) {
       return (
@@ -66,16 +100,6 @@ export const App: React.FC = () => {
       <main className="min-h-screen bg-slate-50">
         <ToastContainer />
         <BinIdentificationPage />
-      </main>
-    );
-  }
-
-  // 2. Authentication Check / Login Page
-  if (currentPath === '/login' || !isAuthenticated) {
-    return (
-      <main className="min-h-screen bg-slate-50">
-        <ToastContainer />
-        <LoginPage />
       </main>
     );
   }
@@ -136,7 +160,16 @@ export const App: React.FC = () => {
     );
   }
 
-  // 4. ADMIN PORTAL (Default for admin routes and admin users)
+  // 4. ADMIN PORTAL (Restricted to verified ADMIN role only)
+  if (!isAdmin) {
+    return (
+      <main className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <ToastContainer />
+        <AccessDenied requiredRole="ADMIN" />
+      </main>
+    );
+  }
+
   const getAdminHeader = () => {
     if (currentPath === '/admin/bins' || currentPath === '/bins') return { title: 'Bin Management', subtitle: 'Fleet monitoring, CRUD configuration & automatic QR generation' };
     if (currentPath.includes('/bins/')) return { title: `Bin Profile: ${params.binCode || ''}`, subtitle: 'Ultrasonic telemetry, fill curve & permanent QR placard' };

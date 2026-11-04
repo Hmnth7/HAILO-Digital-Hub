@@ -1,5 +1,24 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged,
+  updateProfile
+} from 'firebase/auth';
+import { 
+  doc, 
+  getDoc, 
+  setDoc, 
+  updateDoc,
+  collection,
+  query,
+  where,
+  onSnapshot,
+  serverTimestamp 
+} from 'firebase/firestore';
+import { auth, db } from '../lib/firebase';
+import { 
   Bin, 
   Complaint, 
   EVVehicle,
@@ -12,6 +31,7 @@ import {
   ComplaintCategory,
   BinStatus,
   User,
+  UserRole,
   EVStatus,
   TaskStatus,
   WasteType,
@@ -44,6 +64,19 @@ export function formatActualTimestamp(date = new Date()): string {
   });
 }
 
+/**
+ * Remove undefined values so Cloud Firestore never throws unsupported field value errors
+ */
+function cleanFirestoreData<T extends Record<string, any>>(obj: T): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 export interface UpdateComplaintOptions {
   adminNote?: string;
   assignedStaff?: string;
@@ -62,11 +95,14 @@ export interface ToastMessage {
 interface AppContextType {
   // Authentication & Role
   currentUser: User | null;
+  authLoading: boolean;
   isAuthenticated: boolean;
   isAdmin: boolean;
   isCustomer: boolean;
+  loginWithFirebase: (email: string, password: string, portal: 'ADMIN' | 'CUSTOMER') => Promise<User>;
+  registerCustomerWithFirebase: (name: string, email: string, password: string, phone?: string) => Promise<User>;
   loginAs: (role: 'ADMIN' | 'CUSTOMER', email?: string) => void;
-  logout: () => void;
+  logout: () => Promise<void> | void;
 
   // Bins Management (Admin CRUD + View)
   bins: Bin[];
@@ -171,19 +207,56 @@ const STORAGE_KEYS = {
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Current user (null by default so users choose Admin vs Customer at login)
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.USER);
-    if (saved) {
-      try { 
-        const parsed = JSON.parse(saved); 
-        if (parsed && (parsed.role === 'ADMIN' || parsed.role === 'CUSTOMER')) {
-          return parsed;
-        }
-      } catch (e) { /* ignore */ }
-    }
-    return null; // Require explicit login or portal selection
-  });
+  // Current user & authentication loading state (managed securely via Firebase Auth & Firestore)
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+
+  // Synchronize authenticated user & verify role from Firebase Custom Claims and Cloud Firestore
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      if (!fbUser) {
+        setCurrentUser(null);
+        setAuthLoading(false);
+        return;
+      }
+
+      try {
+        // 1. Check custom claims on ID token
+        const idTokenResult = await fbUser.getIdTokenResult();
+        const hasAdminClaim = idTokenResult.claims.role === 'ADMIN' || idTokenResult.claims.admin === true;
+
+        // 2. Check Firestore /users/{uid} document
+        const userDocRef = doc(db, 'users', fbUser.uid);
+        const userSnap = await getDoc(userDocRef);
+        const data = userSnap.exists() ? userSnap.data() : null;
+
+        const role: UserRole = (hasAdminClaim || data?.role === 'ADMIN') ? 'ADMIN' : 'CUSTOMER';
+
+        setCurrentUser({
+          id: fbUser.uid,
+          name: data?.name || fbUser.displayName || (fbUser.email ? fbUser.email.split('@')[0] : 'User'),
+          email: fbUser.email || data?.email || '',
+          role,
+          phone: data?.phone || '',
+          avatar: fbUser.photoURL || undefined
+        });
+      } catch (err) {
+        console.error('Error verifying user role:', err);
+        // Fallback to customer role
+        setCurrentUser({
+          id: fbUser.uid,
+          name: fbUser.displayName || (fbUser.email ? fbUser.email.split('@')[0] : 'Citizen'),
+          email: fbUser.email || '',
+          role: 'CUSTOMER',
+          phone: ''
+        });
+      } finally {
+        setAuthLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const [demoMode, setDemoMode] = useState<boolean>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.DEMO);
@@ -350,16 +423,104 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const remoteList = await res.json();
         if (Array.isArray(remoteList)) {
           const genuine = remoteList.filter(c => !isDemoComplaintRecord(c));
-          setComplaints(genuine);
-          try {
-            localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(genuine));
-          } catch {}
+          // Only use local fallback if not yet receiving Firestore snapshot
+          if (!currentUser) {
+            setComplaints(genuine);
+            try {
+              localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(genuine));
+            } catch {}
+          }
         }
       }
     } catch {
       // Offline fallback
     }
   };
+
+  // Real-time Cloud Firestore synchronization across devices
+  useEffect(() => {
+    if (!currentUser) return;
+
+    let unsubscribe: (() => void) | undefined;
+
+    if (currentUser.role === 'ADMIN') {
+      // Admin: Real-time sync for all complaints
+      const complaintsCol = collection(db, 'complaints');
+      unsubscribe = onSnapshot(
+        complaintsCol,
+        (snapshot) => {
+          const list: Complaint[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as Complaint;
+            if (data && !isDemoComplaintRecord(data)) {
+              list.push({
+                ...data,
+                id: data.id || docSnap.id,
+                complaintCode: data.complaintCode || docSnap.id
+              });
+            }
+          });
+
+          list.sort((a, b) => {
+            const numA = parseInt((a.complaintCode || '').replace(/\D/g, '') || '0', 10);
+            const numB = parseInt((b.complaintCode || '').replace(/\D/g, '') || '0', 10);
+            return numB - numA;
+          });
+
+          setComplaints(list);
+          try {
+            localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(list));
+          } catch {}
+        },
+        (err) => {
+          console.error('Firestore complaints onSnapshot error for Admin:', err);
+        }
+      );
+    } else if (currentUser.role === 'CUSTOMER') {
+      // Customer: Real-time sync for complaints belonging to this customer
+      const complaintsQuery = query(
+        collection(db, 'complaints'),
+        where('customerId', '==', currentUser.id)
+      );
+
+      unsubscribe = onSnapshot(
+        complaintsQuery,
+        (snapshot) => {
+          const list: Complaint[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as Complaint;
+            if (data && !isDemoComplaintRecord(data)) {
+              list.push({
+                ...data,
+                id: data.id || docSnap.id,
+                complaintCode: data.complaintCode || docSnap.id
+              });
+            }
+          });
+
+          list.sort((a, b) => {
+            const numA = parseInt((a.complaintCode || '').replace(/\D/g, '') || '0', 10);
+            const numB = parseInt((b.complaintCode || '').replace(/\D/g, '') || '0', 10);
+            return numB - numA;
+          });
+
+          setComplaints(list);
+          try {
+            localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(list));
+          } catch {}
+        },
+        (err) => {
+          console.error('Firestore complaints onSnapshot error for Customer:', err);
+        }
+      );
+    }
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, [currentUser?.id, currentUser?.role]);
 
   useEffect(() => {
     syncComplaintsFromBackend();
@@ -374,14 +535,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
-  // Persist collections
-  useEffect(() => { 
-    if (currentUser) {
-      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem(STORAGE_KEYS.USER);
-    }
-  }, [currentUser]);
+  // Persist collections (authentication & role are managed by Firebase Auth/Firestore, NOT localStorage)
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.BINS, JSON.stringify(bins)); }, [bins]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.EV, JSON.stringify(evFleet)); }, [evFleet]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(complaints)); }, [complaints]);
@@ -417,6 +571,102 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActivityLogs(prev => [newLog, ...prev]);
   };
 
+  // Firebase Authentication methods
+  const loginWithFirebase = async (email: string, password: string, portal: 'ADMIN' | 'CUSTOMER'): Promise<User> => {
+    const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
+    const fbUser = userCredential.user;
+
+    // Refresh token to fetch freshly assigned custom claims
+    const idTokenResult = await fbUser.getIdTokenResult(true);
+    const hasAdminClaim = idTokenResult.claims.role === 'ADMIN' || idTokenResult.claims.admin === true;
+
+    // Verify role directly from server document in Cloud Firestore
+    const userDocRef = doc(db, 'users', fbUser.uid);
+    const userSnap = await getDoc(userDocRef);
+
+    let resolvedRole: UserRole = 'CUSTOMER';
+    let resolvedName = fbUser.displayName || (fbUser.email ? fbUser.email.split('@')[0] : 'Citizen');
+    let resolvedPhone = '';
+
+    if (userSnap.exists()) {
+      const data = userSnap.data();
+      resolvedRole = (hasAdminClaim || data?.role === 'ADMIN') ? 'ADMIN' : 'CUSTOMER';
+      resolvedName = data?.name || resolvedName;
+      resolvedPhone = data?.phone || '';
+    } else if (hasAdminClaim) {
+      resolvedRole = 'ADMIN';
+    }
+
+    // Enforce municipal operations security: only verified ADMIN role can access Admin Portal
+    if (portal === 'ADMIN' && resolvedRole !== 'ADMIN') {
+      await signOut(auth);
+      setCurrentUser(null);
+      throw new Error('Access Denied: This account is not authorized as a Municipal Administrator.');
+    }
+
+    const verifiedUser: User = {
+      id: fbUser.uid,
+      name: resolvedName,
+      email: fbUser.email || email,
+      role: resolvedRole,
+      phone: resolvedPhone,
+      avatar: fbUser.photoURL || undefined
+    };
+
+    setCurrentUser(verifiedUser);
+    if (resolvedRole === 'ADMIN') {
+      logActivity('ADMIN_LOGIN', verifiedUser.email, 'Admin signed in to operations desk');
+      showToast('success', `Signed in as Administrator (${verifiedUser.name})`, 'Admin Access Granted');
+    } else {
+      showToast('success', `Welcome back, ${verifiedUser.name}`, 'Customer Portal Access');
+    }
+
+    return verifiedUser;
+  };
+
+  const registerCustomerWithFirebase = async (
+    name: string,
+    email: string,
+    password: string,
+    phone?: string
+  ): Promise<User> => {
+    // 1. Create account via Firebase Authentication
+    const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+    const fbUser = userCredential.user;
+
+    // 2. Set Firebase Auth display name
+    if (name.trim()) {
+      try {
+        await updateProfile(fbUser, { displayName: name.trim() });
+      } catch (e) {
+        console.warn('Could not update Auth profile:', e);
+      }
+    }
+
+    // 3. Create Firestore user document (STRICTLY role: 'CUSTOMER')
+    const userDocRef = doc(db, 'users', fbUser.uid);
+    await setDoc(userDocRef, {
+      uid: fbUser.uid,
+      name: name.trim() || 'Citizen',
+      email: email.trim().toLowerCase(),
+      role: 'CUSTOMER',
+      phone: phone?.trim() || '',
+      createdAt: serverTimestamp()
+    });
+
+    const newCustomer: User = {
+      id: fbUser.uid,
+      name: name.trim() || 'Citizen',
+      email: email.trim().toLowerCase(),
+      role: 'CUSTOMER',
+      phone: phone?.trim() || ''
+    };
+
+    setCurrentUser(newCustomer);
+    showToast('success', `Account created successfully! Welcome, ${newCustomer.name}.`, 'Registration Complete');
+    return newCustomer;
+  };
+
   // Auth methods
   const loginAs = (role: 'ADMIN' | 'CUSTOMER', email?: string) => {
     if (role === 'ADMIN') {
@@ -425,7 +675,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         email: email || initialUsers[0].email
       };
       setCurrentUser(admin);
-      try { localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(admin)); } catch {}
       logActivity('ADMIN_LOGIN', admin.email, 'Admin signed in to operations desk');
       showToast('success', `Signed in as Administrator (${admin.name})`, 'Admin Access Granted');
     } else {
@@ -434,14 +683,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         email: email || initialUsers[1].email
       };
       setCurrentUser(customer);
-      try { localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(customer)); } catch {}
       showToast('success', `Welcome back, ${customer.name}`, 'Customer Portal Access');
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
     if (currentUser?.role === 'ADMIN') {
       logActivity('ADMIN_LOGOUT', currentUser.email, 'Admin signed out');
+    }
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.error('Firebase signOut error:', err);
     }
     setCurrentUser(null);
     localStorage.removeItem(STORAGE_KEYS.USER);
@@ -767,7 +1020,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       citizenContact: data.citizenContact || currentUser?.phone || currentUser?.email || 'Not provided'
     };
 
-    // Write to shared backend storage so all devices, sessions, and phones see it
+    // 1. Write to Cloud Firestore so all devices, sessions, and phones see it immediately
+    try {
+      const complaintDocRef = doc(db, 'complaints', nextCode);
+      const firestorePayload = cleanFirestoreData({
+        id: newComplaint.id,
+        complaintCode: nextCode,
+        customerId: newComplaint.customerId,
+        binId: newComplaint.binId,
+        binCode: newComplaint.binCode,
+        location: newComplaint.location,
+        category: newComplaint.category,
+        description: newComplaint.description,
+        priority: newComplaint.priority,
+        status: 'PENDING',
+        source: newComplaint.source,
+        assignedEV: newComplaint.assignedEV,
+        collectionTaskId: newComplaint.collectionTaskId,
+        createdAt: newComplaint.createdAt,
+        reportedAt: newComplaint.reportedAt,
+        citizenName: newComplaint.citizenName,
+        citizenContact: newComplaint.citizenContact,
+        photoUrl: newComplaint.photoUrl
+      });
+      await setDoc(complaintDocRef, firestorePayload);
+      console.log(`Complaint ${nextCode} successfully stored in Cloud Firestore.`);
+    } catch (fsErr) {
+      console.error('Failed to write complaint to Cloud Firestore:', fsErr);
+    }
+
+    // 2. Write to local backend storage for dev parity
     if (typeof window !== 'undefined') {
       try {
         const postRes = await fetch('/api/complaints', {
@@ -947,6 +1229,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('info', `Complaint ${targetComplaint.complaintCode} marked as ${status}.`, 'Status Updated');
     }
 
+    // Persist status change to Cloud Firestore so all devices receive updates in real time
+    try {
+      const targetDocId = targetComplaint.complaintCode || targetComplaint.id;
+      const complaintDocRef = doc(db, 'complaints', targetDocId);
+      const firestoreUpdatePayload = cleanFirestoreData({
+        status,
+        adminNote: options.adminNote !== undefined ? options.adminNote : targetComplaint.adminNote,
+        assignedStaff: resolvedStaffName || null,
+        assignedStaffId: resolvedStaffId || null,
+        afterCleaningPhotoUrl: options.afterCleaningPhotoUrl !== undefined ? options.afterCleaningPhotoUrl : targetComplaint.afterCleaningPhotoUrl,
+        acceptedAt: normStatus === 'ACCEPTED' ? actualTimestamp : targetComplaint.acceptedAt,
+        rejectedAt: normStatus === 'REJECTED' ? actualTimestamp : targetComplaint.rejectedAt,
+        rejectionReason: normStatus === 'REJECTED' ? (options.rejectionReason || 'Rejected by administrator') : targetComplaint.rejectionReason,
+        assignedAt: normStatus === 'ASSIGNED' ? actualTimestamp : targetComplaint.assignedAt,
+        resolvedAt: normStatus === 'RESOLVED' ? actualTimestamp : targetComplaint.resolvedAt,
+        resolutionMethod: normStatus === 'RESOLVED' ? `Manual Sanitation (${resolvedStaffName || 'Cleaning Staff'})` : targetComplaint.resolutionMethod
+      });
+      updateDoc(complaintDocRef, firestoreUpdatePayload).catch(fsErr => {
+        console.error('Firestore status update error:', fsErr);
+      });
+    } catch (e) {
+      console.error('Failed to update complaint in Firestore:', e);
+    }
+
     // Persist status change to shared backend storage
     if (typeof window !== 'undefined') {
       const payload: any = {
@@ -1024,6 +1330,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return c;
     }));
+
+    // Update in Cloud Firestore
+    try {
+      const targetComplaint = complaints.find(c => c.id === complaintId || c.complaintCode === complaintId);
+      const targetDocId = targetComplaint?.complaintCode || targetComplaint?.id || complaintId;
+      const complaintDocRef = doc(db, 'complaints', targetDocId);
+      updateDoc(complaintDocRef, { afterCleaningPhotoUrl: photoDataUrl }).catch(err => {
+        console.error('Firestore photo upload error:', err);
+      });
+    } catch (e) {
+      console.error('Failed to update photo in Firestore:', e);
+    }
 
     if (typeof window !== 'undefined') {
       fetch('/api/complaints', {
@@ -1289,9 +1607,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     <AppContext.Provider
       value={{
         currentUser,
-        isAuthenticated: !!currentUser,
-        isAdmin: currentUser?.role === 'ADMIN',
-        isCustomer: currentUser?.role === 'CUSTOMER',
+        authLoading,
+        isAuthenticated: !authLoading && !!currentUser,
+        isAdmin: !authLoading && currentUser?.role === 'ADMIN',
+        isCustomer: !authLoading && currentUser?.role === 'CUSTOMER',
+        loginWithFirebase,
+        registerCustomerWithFirebase,
         loginAs,
         logout,
         bins,

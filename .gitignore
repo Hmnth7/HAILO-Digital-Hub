@@ -31,3 +31,7 @@ dist-ssr
 .env.production.local
 .env.local
 !.env.example
+
+# Firebase Admin Service Account Keys
+*serviceAccount*.json
+serviceAccountKey.json

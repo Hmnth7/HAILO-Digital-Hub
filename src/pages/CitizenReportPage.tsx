@@ -58,6 +58,10 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
   useEffect(() => {
     if (!activeCode) {
       navigate('/report');
+    } else {
+      try {
+        sessionStorage.setItem('hailo_return_to', `/report/${activeCode}`);
+      } catch {}
     }
   }, [activeCode, navigate]);
 
@@ -68,6 +72,17 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
   const [citizenContact, setCitizenContact] = useState(currentUser?.email || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    if (currentUser) {
+      if (!citizenName && currentUser.name) {
+        setCitizenName(currentUser.name);
+      }
+      if (!citizenContact && (currentUser.email || currentUser.phone)) {
+        setCitizenContact(currentUser.email || currentUser.phone || '');
+      }
+    }
+  }, [currentUser]);
+
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -77,7 +92,37 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
       }
       const reader = new FileReader();
       reader.onloadend = () => {
-        setPhotoUrl(reader.result as string);
+        const rawUrl = reader.result as string;
+        // Optimize and compress image to fit safely within Firestore 1MB document limit
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const maxDim = 800;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            setPhotoUrl(canvas.toDataURL('image/jpeg', 0.7));
+          } else {
+            setPhotoUrl(rawUrl);
+          }
+        };
+        img.onerror = () => {
+          setPhotoUrl(rawUrl);
+        };
+        img.src = rawUrl;
       };
       reader.readAsDataURL(file);
     }
@@ -101,7 +146,8 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
     const hiddenInput = document.getElementById('selected-complaint-category') as HTMLInputElement | null;
     const resolvedCategory = (hiddenInput?.value as ComplaintCategory) || selectedCategory;
 
-    const detectedSource = isAdmin ? 'ADMIN' : (currentUser?.role === 'CUSTOMER' ? 'CUSTOMER' : 'QR_SCAN');
+    const isFromQr = !!(routeBinCode || params.binCode);
+    const detectedSource = isAdmin ? 'ADMIN' : (isFromQr ? 'QR_SCAN' : (currentUser?.role === 'CUSTOMER' ? 'CUSTOMER' : 'QR_SCAN'));
 
     try {
       const newComplaint = await createComplaint({

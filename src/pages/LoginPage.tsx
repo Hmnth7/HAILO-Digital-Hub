@@ -15,37 +15,155 @@ import {
   QrCode,
   FileText,
   Award,
-  ChevronDown,
   LogOut,
   Building2,
-  CheckCircle2
+  CheckCircle2,
+  AlertCircle,
+  UserPlus,
+  Loader2,
+  Phone,
+  User as UserIcon
 } from 'lucide-react';
 
+function getFriendlyErrorMessage(error: any): string {
+  if (!error) return 'An unexpected error occurred. Please try again.';
+  const code = error.code || '';
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+      return 'Incorrect email or password. Please verify your credentials.';
+    case 'auth/user-not-found':
+      return 'No account was found with this email address.';
+    case 'auth/email-already-in-use':
+      return 'An account is already registered with this email address. Please sign in instead.';
+    case 'auth/weak-password':
+      return 'Password must be at least 6 characters in length.';
+    case 'auth/invalid-email':
+      return 'Please provide a valid email address.';
+    case 'auth/too-many-requests':
+      return 'Too many failed login attempts. Please wait a moment and try again.';
+    default:
+      return error.message || 'Authentication failed. Please try again.';
+  }
+}
+
 export const LoginPage: React.FC = () => {
-  const { loginAs, isAuthenticated, currentUser, logout, isAdmin } = useApp();
+  const { 
+    loginWithFirebase, 
+    registerCustomerWithFirebase, 
+    isAuthenticated, 
+    currentUser, 
+    logout, 
+    isAdmin,
+    bins,
+    showToast 
+  } = useApp();
   const { navigate } = useRouter();
 
-  // Active portal tab or credentials form
-  const [activePortal, setActivePortal] = useState<'ADMIN' | 'CUSTOMER'>('ADMIN');
-  const [showAdminCustomCreds, setShowAdminCustomCreds] = useState(false);
-  const [showCustomerCustomCreds, setShowCustomerCustomCreds] = useState(false);
+  // Scanned dustbin return path detection (when a citizen scans a physical QR code)
+  const returnToPath = typeof window !== 'undefined' ? sessionStorage.getItem('hailo_return_to') : null;
+  const returnBinCode = React.useMemo(() => {
+    if (!returnToPath) return null;
+    const match = returnToPath.match(/\/report\/([A-Za-z0-9_-]+)/i);
+    if (match && match[1] && match[1].toLowerCase() !== 'success') {
+      return match[1].toUpperCase();
+    }
+    return null;
+  }, [returnToPath]);
 
-  const [adminEmail, setAdminEmail] = useState('admin@hailo.digitalhub.ac');
-  const [adminPassword, setAdminPassword] = useState('••••••••••••');
+  const matchedReturnBin = returnBinCode ? bins.find(b => b.binCode.toUpperCase() === returnBinCode) : null;
 
-  const [customerEmail, setCustomerEmail] = useState('rahul.verma@campus.edu');
-  const [customerPassword, setCustomerPassword] = useState('••••••••••••');
+  // Admin form state
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminError, setAdminError] = useState<string | null>(null);
 
-  const handleAdminLogin = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    loginAs('ADMIN', adminEmail);
-    navigate('/admin/dashboard');
+  // Customer portal tab: 'SIGN_IN' | 'REGISTER'
+  const [customerTab, setCustomerTab] = useState<'SIGN_IN' | 'REGISTER'>('SIGN_IN');
+
+  // Customer Sign In state
+  const [customerEmail, setCustomerEmail] = useState('');
+  const [customerPassword, setCustomerPassword] = useState('');
+  const [customerLoading, setCustomerLoading] = useState(false);
+  const [customerError, setCustomerError] = useState<string | null>(null);
+
+  // Customer Registration state
+  const [regName, setRegName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regPhone, setRegPhone] = useState('');
+  const [regLoading, setRegLoading] = useState(false);
+  const [regError, setRegError] = useState<string | null>(null);
+
+  const handleAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminError(null);
+    setAdminLoading(true);
+
+    try {
+      await loginWithFirebase(adminEmail, adminPassword, 'ADMIN');
+      try {
+        const returnTo = sessionStorage.getItem('hailo_return_to');
+        if (returnTo && returnTo.startsWith('/report')) {
+          sessionStorage.removeItem('hailo_return_to');
+          navigate(returnTo);
+          return;
+        }
+      } catch {}
+      navigate('/admin/dashboard');
+    } catch (err: any) {
+      setAdminError(getFriendlyErrorMessage(err));
+    } finally {
+      setAdminLoading(false);
+    }
   };
 
-  const handleCustomerLogin = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    loginAs('CUSTOMER', customerEmail);
+  const redirectAfterCustomerAuth = () => {
+    try {
+      const returnTo = sessionStorage.getItem('hailo_return_to');
+      if (returnTo && returnTo.startsWith('/report')) {
+        sessionStorage.removeItem('hailo_return_to');
+        navigate(returnTo);
+        return;
+      }
+    } catch {}
     navigate('/customer/dashboard');
+  };
+
+  const handleCustomerLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCustomerError(null);
+    setCustomerLoading(true);
+
+    try {
+      await loginWithFirebase(customerEmail, customerPassword, 'CUSTOMER');
+      redirectAfterCustomerAuth();
+    } catch (err: any) {
+      setCustomerError(getFriendlyErrorMessage(err));
+    } finally {
+      setCustomerLoading(false);
+    }
+  };
+
+  const handleCustomerRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegError(null);
+
+    if (regPassword.length < 6) {
+      setRegError('Password must be at least 6 characters long.');
+      return;
+    }
+
+    setRegLoading(true);
+    try {
+      await registerCustomerWithFirebase(regName, regEmail, regPassword, regPhone);
+      redirectAfterCustomerAuth();
+    } catch (err: any) {
+      setRegError(getFriendlyErrorMessage(err));
+    } finally {
+      setRegLoading(false);
+    }
   };
 
   return (
@@ -67,7 +185,7 @@ export const LoginPage: React.FC = () => {
             Smart Waste Management System
           </p>
           <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Choose the portal you want to access: Manage municipal IoT operations as Admin, or submit and track reports as a Customer.
+            Secure municipal operations desk for staff, or citizen portal to report and track issues across campus bins.
           </p>
         </div>
 
@@ -80,7 +198,7 @@ export const LoginPage: React.FC = () => {
               </div>
               <div>
                 <p className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                  <span>Currently signed in as {currentUser.name}</span>
+                  <span>Signed in as {currentUser.name}</span>
                   <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
                     {currentUser.role}
                   </span>
@@ -108,6 +226,31 @@ export const LoginPage: React.FC = () => {
           </div>
         )}
 
+        {/* Scanned Dustbin Notice if citizen scanned a QR code while unauthenticated */}
+        {returnBinCode && (
+          <div className="bg-emerald-50/95 backdrop-blur-md rounded-2xl border-2 border-emerald-500/40 p-4 shadow-sm flex items-center gap-3.5 max-w-xl mx-auto text-left">
+            <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+              <QrCode className="w-5 h-5 stroke-[2.2]" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-black text-slate-900 flex items-center gap-1.5 flex-wrap">
+                <span>Scanned Dustbin:</span>
+                <span className="font-mono bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded text-xs font-bold">
+                  {returnBinCode}
+                </span>
+                {matchedReturnBin && (
+                  <span className="text-emerald-800 font-semibold">
+                    ({matchedReturnBin.location})
+                  </span>
+                )}
+              </p>
+              <p className="text-[11px] text-emerald-800 font-medium mt-0.5 leading-snug">
+                Please sign in or register below to submit your report. You will be redirected right back to this dustbin's report form.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Two Dedicated Portal Selection Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           
@@ -121,7 +264,9 @@ export const LoginPage: React.FC = () => {
                   <ShieldCheck className="w-3 h-3 text-emerald-400" />
                   <span>Operations Desk</span>
                 </span>
-                <span className="text-[11px] font-bold text-slate-400 font-mono">STAFF</span>
+                <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full font-mono">
+                  MANUAL AUTH
+                </span>
               </div>
 
               <div>
@@ -130,7 +275,7 @@ export const LoginPage: React.FC = () => {
                   <span>Admin Dashboard</span>
                 </h2>
                 <p className="text-xs text-slate-500 mt-1">
-                  Complete authority desk for municipal supervisors, sanitary staff & fleet coordinators.
+                  Restricted authority desk for municipal supervisors, sanitary staff & fleet coordinators.
                 </p>
               </div>
 
@@ -155,69 +300,73 @@ export const LoginPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Actions for Admin */}
+            {/* Authenticated Admin Form */}
             <div className="pt-6 mt-6 border-t border-slate-100 space-y-3 relative z-10">
-              <button
-                type="button"
-                onClick={() => handleAdminLogin()}
-                className="w-full py-3 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 shadow-md shadow-slate-900/20 transition-all hover:translate-y-[-1px]"
-              >
-                <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                <span>Enter Admin Dashboard</span>
-                <ArrowRight className="w-4 h-4 ml-auto" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowAdminCustomCreds(!showAdminCustomCreds)}
-                className="w-full text-center text-[11px] font-semibold text-slate-500 hover:text-slate-800 flex items-center justify-center gap-1 transition-colors"
-              >
-                <span>{showAdminCustomCreds ? 'Hide custom credentials' : 'Use custom email & password'}</span>
-                <ChevronDown className={`w-3 h-3 transition-transform ${showAdminCustomCreds ? 'rotate-180' : ''}`} />
-              </button>
-
-              {showAdminCustomCreds && (
-                <form onSubmit={handleAdminLogin} className="space-y-3 pt-2 bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                      Admin Email
-                    </label>
-                    <div className="relative">
-                      <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
-                      <input
-                        type="email"
-                        value={adminEmail}
-                        onChange={(e) => setAdminEmail(e.target.value)}
-                        required
-                        className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                      Password
-                    </label>
-                    <div className="relative">
-                      <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
-                      <input
-                        type="password"
-                        value={adminPassword}
-                        onChange={(e) => setAdminPassword(e.target.value)}
-                        required
-                        className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
-                      />
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold transition-colors"
-                  >
-                    Authenticate as Admin
-                  </button>
-                </form>
+              {adminError && (
+                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{adminError}</span>
+                </div>
               )}
+
+              <form onSubmit={handleAdminLogin} className="space-y-3">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                    Admin Email
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                    <input
+                      type="email"
+                      placeholder="admin@hailo.digitalhub.ac"
+                      value={adminEmail}
+                      onChange={(e) => setAdminEmail(e.target.value)}
+                      required
+                      className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                    Password
+                  </label>
+                  <div className="relative">
+                    <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                    <input
+                      type="password"
+                      placeholder="••••••••••••"
+                      value={adminPassword}
+                      onChange={(e) => setAdminPassword(e.target.value)}
+                      required
+                      className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={adminLoading}
+                  className="w-full py-3 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 shadow-md shadow-slate-900/20 transition-all hover:translate-y-[-1px] disabled:opacity-60"
+                >
+                  {adminLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                      <span>Authenticating Admin...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <span>Sign In to Admin Operations</span>
+                      <ArrowRight className="w-4 h-4 ml-auto" />
+                    </>
+                  )}
+                </button>
+              </form>
+
+              <p className="text-[10px] text-slate-400 text-center leading-relaxed">
+                Admin accounts are provisioned and authorized manually. Public signup is permanently restricted to citizen accounts.
+              </p>
             </div>
           </div>
 
@@ -231,7 +380,7 @@ export const LoginPage: React.FC = () => {
                   <UserCheck className="w-3 h-3 text-white" />
                   <span>Citizen Grievance Hub</span>
                 </span>
-                <span className="text-[11px] font-bold text-emerald-700 font-mono">PUBLIC</span>
+                <span className="text-[11px] font-bold text-emerald-700 font-mono">PUBLIC ACCESS</span>
               </div>
 
               <div>
@@ -244,62 +393,58 @@ export const LoginPage: React.FC = () => {
                 </p>
               </div>
 
-              {/* Feature Highlights */}
-              <div className="space-y-2 pt-1 border-t border-slate-100">
-                <div className="flex items-center gap-2 text-xs text-slate-600">
-                  <FileText className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span>Instant QR incident reporting for full / overflowing bins</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-slate-600">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span>Real-time tracking of submitted complaints & resolution</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-slate-600">
-                  <Award className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span>Campus cleanliness eco-contributions & reward badges</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-slate-600">
-                  <Trash2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span>Stakeholder satisfaction ratings and campus feedback</span>
-                </div>
+              {/* Tab Selector: Sign In vs Register */}
+              <div className="flex p-1 bg-slate-100 rounded-xl text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => { setCustomerTab('SIGN_IN'); setCustomerError(null); }}
+                  className={`flex-1 py-1.5 rounded-lg transition-all ${
+                    customerTab === 'SIGN_IN'
+                      ? 'bg-white text-emerald-800 shadow-xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Sign In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setCustomerTab('REGISTER'); setRegError(null); }}
+                  className={`flex-1 py-1.5 rounded-lg transition-all ${
+                    customerTab === 'REGISTER'
+                      ? 'bg-white text-emerald-800 shadow-xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Create Account
+                </button>
               </div>
             </div>
 
             {/* Actions for Customer */}
-            <div className="pt-6 mt-6 border-t border-slate-100 space-y-3 relative z-10">
-              <button
-                type="button"
-                onClick={() => handleCustomerLogin()}
-                className="w-full py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition-all hover:translate-y-[-1px]"
-              >
-                <UserCheck className="w-4 h-4" />
-                <span>Enter Customer Dashboard</span>
-                <ArrowRight className="w-4 h-4 ml-auto" />
-              </button>
+            <div className="pt-4 mt-4 border-t border-slate-100 space-y-3 relative z-10">
+              {customerTab === 'SIGN_IN' ? (
+                /* Customer Sign In Form */
+                <form onSubmit={handleCustomerLogin} className="space-y-3">
+                  {customerError && (
+                    <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>{customerError}</span>
+                    </div>
+                  )}
 
-              <button
-                type="button"
-                onClick={() => setShowCustomerCustomCreds(!showCustomerCustomCreds)}
-                className="w-full text-center text-[11px] font-semibold text-slate-500 hover:text-emerald-700 flex items-center justify-center gap-1 transition-colors"
-              >
-                <span>{showCustomerCustomCreds ? 'Hide custom credentials' : 'Use custom email & password'}</span>
-                <ChevronDown className={`w-3 h-3 transition-transform ${showCustomerCustomCreds ? 'rotate-180' : ''}`} />
-              </button>
-
-              {showCustomerCustomCreds && (
-                <form onSubmit={handleCustomerLogin} className="space-y-3 pt-2 bg-emerald-50/60 p-3.5 rounded-2xl border border-emerald-100">
                   <div>
                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                      Citizen Account Email
+                      Citizen Email
                     </label>
                     <div className="relative">
                       <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
                       <input
                         type="email"
+                        placeholder="your.email@campus.edu"
                         value={customerEmail}
                         onChange={(e) => setCustomerEmail(e.target.value)}
                         required
-                        className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-full pl-9 pr-3 py-2 bg-emerald-50/40 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       />
                     </div>
                   </div>
@@ -312,19 +457,130 @@ export const LoginPage: React.FC = () => {
                       <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
                       <input
                         type="password"
+                        placeholder="••••••••••••"
                         value={customerPassword}
                         onChange={(e) => setCustomerPassword(e.target.value)}
                         required
-                        className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-full pl-9 pr-3 py-2 bg-emerald-50/40 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       />
                     </div>
                   </div>
 
                   <button
                     type="submit"
-                    className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors"
+                    disabled={customerLoading}
+                    className="w-full py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition-all hover:translate-y-[-1px] disabled:opacity-60"
                   >
-                    Authenticate as Citizen
+                    {customerLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Signing In...</span>
+                      </>
+                    ) : (
+                      <>
+                        <UserCheck className="w-4 h-4" />
+                        <span>Sign In as Citizen</span>
+                        <ArrowRight className="w-4 h-4 ml-auto" />
+                      </>
+                    )}
+                  </button>
+                </form>
+              ) : (
+                /* Customer Registration Form */
+                <form onSubmit={handleCustomerRegister} className="space-y-3">
+                  {regError && (
+                    <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>{regError}</span>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                      Full Name
+                    </label>
+                    <div className="relative">
+                      <UserIcon className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                      <input
+                        type="text"
+                        placeholder="Rahul Verma"
+                        value={regName}
+                        onChange={(e) => setRegName(e.target.value)}
+                        required
+                        className="w-full pl-9 pr-3 py-2 bg-emerald-50/40 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                      Email Address
+                    </label>
+                    <div className="relative">
+                      <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                      <input
+                        type="email"
+                        placeholder="rahul.verma@campus.edu"
+                        value={regEmail}
+                        onChange={(e) => setRegEmail(e.target.value)}
+                        required
+                        className="w-full pl-9 pr-3 py-2 bg-emerald-50/40 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        Password (Min 6 chars)
+                      </label>
+                      <div className="relative">
+                        <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                        <input
+                          type="password"
+                          placeholder="••••••••"
+                          value={regPassword}
+                          onChange={(e) => setRegPassword(e.target.value)}
+                          required
+                          className="w-full pl-9 pr-3 py-2 bg-emerald-50/40 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        Phone (Optional)
+                      </label>
+                      <div className="relative">
+                        <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                        <input
+                          type="tel"
+                          placeholder="+91 98765 43210"
+                          value={regPhone}
+                          onChange={(e) => setRegPhone(e.target.value)}
+                          className="w-full pl-9 pr-3 py-2 bg-emerald-50/40 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={regLoading}
+                    className="w-full py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition-all hover:translate-y-[-1px] disabled:opacity-60"
+                  >
+                    {regLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Creating Account...</span>
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus className="w-4 h-4" />
+                        <span>Register as Citizen</span>
+                        <ArrowRight className="w-4 h-4 ml-auto" />
+                      </>
+                    )}
                   </button>
                 </form>
               )}
@@ -333,14 +589,22 @@ export const LoginPage: React.FC = () => {
 
         </div>
 
-        {/* Public Citizen QR direct report footer */}
+        {/* Citizen QR direct report footer */}
         <div className="pt-4 text-center">
           <button
-            onClick={() => navigate('/report')}
+            onClick={() => {
+              if (isAuthenticated) {
+                navigate('/report');
+              } else {
+                setCustomerTab('REGISTER');
+                setCustomerError(null);
+                showToast('info', 'Please sign in or register to submit a dustbin report.', 'Account Required');
+              }
+            }}
             className="text-xs text-slate-600 hover:text-emerald-700 font-semibold inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white/80 border border-slate-200 hover:border-emerald-300 transition-all shadow-xs"
           >
             <QrCode className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Public Citizen Incident Report (Scan QR / Select Bin - No login required)</span>
+            <span>Report Dustbin Incident (Sign in or register to submit)</span>
             <ExternalLink className="w-3 h-3 text-slate-400" />
           </button>
         </div>

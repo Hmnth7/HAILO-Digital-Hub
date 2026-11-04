@@ -1,0 +1,123 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: /users/{userId}
+// Document ID: Firebase Auth UID
+// Fields:
+//   - id: string (optional) - User ID matching Auth UID
+//   - name: string (required) - Full user name
+//   - email: string (required) - User email address
+//   - role: string (required) - User role ('ADMIN' | 'CUSTOMER')
+//   - phone: string (optional) - Contact phone number
+//   - avatar: string (optional) - Profile picture URL
+//
+// Collection: /complaints/{complaintId}
+// Document ID: Complaint ID / CMP code
+// Fields:
+//   - id: string (optional) - Unique complaint identifier
+//   - complaintCode: string (optional) - Sequential tracking code (e.g. CMP-001)
+//   - customerId: string (optional) - UID of registered customer, null for guests
+//   - binId: string (required) - Associated waste bin ID
+//   - binCode: string (required) - Associated waste bin code (e.g. BIN-001)
+//   - location: string (required) - Physical location description
+//   - category: string (required) - Category of complaint
+//   - description: string (required) - Issue description
+//   - priority: string (required) - Priority level ('LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL')
+//   - status: string (required) - Workflow status ('PENDING' | 'ACCEPTED' | 'ASSIGNED' | 'IN PROGRESS' | 'RESOLVED' | 'REJECTED')
+//   - assignedStaff: string (optional) - Name of assigned sanitation personnel
+//   - assignedStaffId: string (optional) - ID of assigned sanitation personnel
+//   - afterCleaningPhotoUrl: string (optional) - Resolution verification photo URL
+//   - citizenContact: string (optional) - Contact email or phone of reporting citizen
+//   - citizenName: string (optional) - Name of reporting citizen
+//   - createdAt: string | timestamp (required) - Creation timestamp
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if user is an ADMIN (verified via Custom Claims or /users/{userId} document)
+    function isAdmin() {
+      return request.auth != null && (
+        request.auth.token.role == 'ADMIN' ||
+        request.auth.token.admin == true ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN')
+      );
+    }
+
+    // Check if user is a CUSTOMER (verified against /users/{userId} document)
+    function isCustomer() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'CUSTOMER';
+    }
+
+    // Check if user is the owner of the document
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // ===============================================================
+    // Collection: /users/{userId}
+    // ===============================================================
+    match /users/{userId} {
+      // Owners and Admins can read profile documents
+      allow read: if isOwner(userId) || isAdmin();
+
+      // Authenticated users can create their own profile with CUSTOMER role only
+      allow create: if isAuthenticated() &&
+        request.auth.uid == userId &&
+        request.resource.data.role == 'CUSTOMER';
+
+      // Owners can update their profile without changing role; Admins can update any profile
+      allow update: if (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin();
+
+      // Only Admins can delete user profiles
+      allow delete: if isAdmin();
+    }
+
+    // ===============================================================
+    // Collection: /complaints/{complaintId}
+    // ===============================================================
+    match /complaints/{complaintId} {
+      // Admins or reporting citizen / customer can read complaints
+      allow read: if isAdmin() || (isAuthenticated() && (resource.data.customerId == request.auth.uid || resource.data.citizenContact == request.auth.token.email));
+
+      // Creation allowed for:
+      // 1) Authenticated customer logging their own complaint in PENDING status without staff assignment
+      // 2) Unauthenticated citizen logging a complaint in PENDING status without customerId
+      // 3) Admin user
+      allow create: if (isAuthenticated() && request.resource.data.customerId == request.auth.uid && request.resource.data.status in ['PENDING', 'Pending'] && (!('assignedStaff' in request.resource.data) || request.resource.data.assignedStaff == null || request.resource.data.assignedStaff == ''))
+        || (!isAuthenticated() && (request.resource.data.customerId == null || !('customerId' in request.resource.data)) && request.resource.data.status in ['PENDING', 'Pending'])
+        || isAdmin();
+
+      // Customers must not change complaint status, assigned staff, or admin-only fields.
+      // Only verified Admin users may read all complaints, assign cleaning staff, and update complaint status.
+      allow update: if isAdmin();
+
+      // Only Admins can delete complaints
+      allow delete: if isAdmin();
+    }
+
+    // ===============================================================
+    // Default Deny Rule
+    // ===============================================================
+    // Deny all other collections and documents by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -190,9 +190,38 @@ export const ComplaintsPage: React.FC = () => {
 
     const reader = new FileReader();
     reader.onload = () => {
-      const result = reader.result as string;
-      uploadAfterCleaningPhoto(selectedComplaint.id, result);
-      setResolutionError(null);
+      const rawUrl = reader.result as string;
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxDim = 800;
+        let width = img.width;
+        let height = img.height;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          uploadAfterCleaningPhoto(selectedComplaint.id, canvas.toDataURL('image/jpeg', 0.7));
+        } else {
+          uploadAfterCleaningPhoto(selectedComplaint.id, rawUrl);
+        }
+        setResolutionError(null);
+      };
+      img.onerror = () => {
+        uploadAfterCleaningPhoto(selectedComplaint.id, rawUrl);
+        setResolutionError(null);
+      };
+      img.src = rawUrl;
     };
     reader.onerror = () => {
       showToast('error', 'Failed to read image file. Please try again.', 'Upload Error');
