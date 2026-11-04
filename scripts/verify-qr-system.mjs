@@ -1,5 +1,4 @@
 import { spawn } from 'child_process';
-import fs from 'fs';
 
 async function runQrVerification() {
   console.log('========================================================================');
@@ -9,7 +8,7 @@ async function runQrVerification() {
   // Spawn Headless Chrome with Remote Debugging
   const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', [
     '--headless=new',
-    '--remote-debugging-port=9226',
+    '--remote-debugging-port=9227',
     '--disable-gpu',
     '--no-sandbox',
     '--user-data-dir=/tmp/test-qr-system-' + Date.now(),
@@ -19,7 +18,7 @@ async function runQrVerification() {
   let ready = false;
   for (let i = 0; i < 40; i++) {
     try {
-      const res = await fetch('http://127.0.0.1:9226/json');
+      const res = await fetch('http://127.0.0.1:9227/json');
       if (res.ok) {
         ready = true;
         break;
@@ -29,12 +28,12 @@ async function runQrVerification() {
   }
 
   if (!ready) {
-    console.error('❌ Failed to connect to headless Chrome on port 9226');
+    console.error('❌ Failed to connect to headless Chrome on port 9227');
     chrome.kill();
     process.exit(1);
   }
 
-  const jsonRes = await fetch('http://127.0.0.1:9226/json');
+  const jsonRes = await fetch('http://127.0.0.1:9227/json');
   const targets = await jsonRes.json();
   const pageTarget = targets.find(t => t.type === 'page');
   const ws = new WebSocket(pageTarget.webSocketDebuggerUrl);
@@ -88,7 +87,7 @@ async function runQrVerification() {
 
   async function navigate(url) {
     await send('Page.navigate', { url });
-    await new Promise(r => setTimeout(r, 600));
+    await new Promise(r => setTimeout(r, 700));
   }
 
   let totalTests = 0;
@@ -106,13 +105,14 @@ async function runQrVerification() {
 
   try {
     // -------------------------------------------------------------------------
-    // TEST 1: App Initial State & 5 Canonical Dustbins in Database
+    // TEST 1: App Initial State & 5 Canonical Dustbins in Fleet
     // -------------------------------------------------------------------------
     console.log('\n--- TEST SUITE 1: 5 Canonical Dustbins Initialization ---');
     await navigate('http://127.0.0.1:3000/login');
+    await new Promise(r => setTimeout(r, 600));
 
     const canonicalBinsData = await evaluate(`(() => {
-      const stored = localStorage.getItem('hailo_bins');
+      const stored = localStorage.getItem('hailo_v3_bins');
       const bins = stored ? JSON.parse(stored) : [];
       return bins.map(b => ({
         code: b.binCode,
@@ -141,36 +141,42 @@ async function runQrVerification() {
     // -------------------------------------------------------------------------
     console.log('\n--- TEST SUITE 2: Admin QR Management Page & Placards ---');
     
-    // Log in as Admin
+    // Log in as Admin using 'Enter Admin Dashboard' button
     await evaluate(`(() => {
       const btns = Array.from(document.querySelectorAll('button'));
-      const adminBtn = btns.find(b => b.innerText.includes('Admin Demo') || b.innerText.includes('Admin Portal'));
+      const adminBtn = btns.find(b => b.innerText.includes('Enter Admin Dashboard'));
       if (adminBtn) adminBtn.click();
     })()`);
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 800));
+
+    // Verify redirected to /admin/dashboard
+    const currentPath = await evaluate(`window.location.pathname`);
+    assert(currentPath.includes('/admin'), `Admin login redirects to Admin Dashboard (path: ${currentPath})`);
 
     // Navigate to /admin/qr
     await navigate('http://127.0.0.1:3000/admin/qr');
+    await new Promise(r => setTimeout(r, 600));
 
     const qrPageInfo = await evaluate(`(() => {
       const pageText = document.body.innerText;
-      const binCards = Array.from(document.querySelectorAll('span')).filter(s => s.innerText.match(/^BIN-00[1-5]$/)).map(s => s.innerText);
-      const downloadButtons = Array.from(document.querySelectorAll('button')).filter(b => b.innerText.includes('PNG') || b.innerText.includes('SVG'));
+      const binSpans = Array.from(document.querySelectorAll('span')).filter(s => s.innerText.match(/^BIN-00[1-5]$/)).map(s => s.innerText);
+      const downloadButtons = Array.from(document.querySelectorAll('button')).filter(b => b.innerText === 'PNG' || b.innerText === 'SVG');
       const batchZipBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Download All 5 (ZIP)'));
       const printablePdfBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Printable A4 Sheet / PDF'));
-      const domainHeader = document.body.innerText.includes('Permanent Public HTTPS QR Architecture');
+      const domainHeader = pageText.toLowerCase().includes('permanent public https qr architecture');
 
       return {
-        has5Cards: binCards.length >= 5,
-        binCodes: binCards,
-        hasDownloadButtons: downloadButtons.length >= 10,
+        has5Cards: binSpans.length >= 5,
+        binCodes: binSpans,
+        downloadButtonsCount: downloadButtons.length,
         hasBatchZipBtn: !!batchZipBtn,
         hasPrintablePdfBtn: !!printablePdfBtn,
         hasDomainHeader: domainHeader
       };
     })()`);
 
-    assert(qrPageInfo.has5Cards, 'QR Management displays at least 5 dustbin cards');
+    assert(qrPageInfo.has5Cards, `QR Management displays cards for all 5 dustbins (${qrPageInfo.binCodes.join(', ')})`);
+    assert(qrPageInfo.downloadButtonsCount >= 10, `Download PNG & SVG buttons available on cards (found: ${qrPageInfo.downloadButtonsCount})`);
     assert(qrPageInfo.hasBatchZipBtn, 'Batch ZIP export button "Download All 5 (ZIP)" is present');
     assert(qrPageInfo.hasPrintablePdfBtn, 'Printable A4 Sheet / PDF button is present');
     assert(qrPageInfo.hasDomainHeader, 'Permanent Public HTTPS QR Architecture section is present');
@@ -191,7 +197,6 @@ async function runQrVerification() {
         isActive: true
       };
       
-      // Dynamic import of export utilities
       const qrUtils = await import('/src/utils/qrExportUtils.ts');
       
       // 1. Generate PNG Blob
@@ -255,7 +260,7 @@ async function runQrVerification() {
     assert(batchExports.zipType === 'application/zip', 'Batch ZIP produces application/zip blob');
     assert(batchExports.zipSize > 25000, `Batch ZIP bundle contains all 5 PNGs and SVGs (${batchExports.zipSize} bytes)`);
     assert(batchExports.pdfType === 'application/pdf', 'Printable PDF produces application/pdf blob');
-    assert(batchExports.pdfSize > 50000, `Printable A4 PDF is high-res vector document (${batchExports.pdfSize} bytes)`);
+    assert(batchExports.pdfSize > 50000, `Printable A4 PDF is high-res document (${batchExports.pdfSize} bytes)`);
     assert(batchExports.pdfHeader.startsWith('%PDF-1.4'), 'Printable PDF conforms to ISO standard %PDF-1.4 header');
 
     // -------------------------------------------------------------------------
@@ -300,16 +305,15 @@ async function runQrVerification() {
 
     // Toggle BIN-005 to Inactive
     await evaluate(`(() => {
-      // Find BIN-005 card
       const spans = Array.from(document.querySelectorAll('span'));
       const bin5Span = spans.find(s => s.innerText === 'BIN-005');
       if (bin5Span) {
-        const card = bin5Span.closest('div.bg-white, div.rounded-2xl');
-        const toggleBtn = card.querySelector('button[title*="toggle"]');
+        const card = bin5Span.closest('div.rounded-2xl');
+        const toggleBtn = card ? card.querySelector('button[title*="toggle"]') : null;
         if (toggleBtn) toggleBtn.click();
       }
     })()`);
-    await new Promise(r => setTimeout(r, 400));
+    await new Promise(r => setTimeout(r, 500));
 
     const bin5Status = await evaluate(`(() => {
       const spans = Array.from(document.querySelectorAll('span'));
@@ -388,7 +392,7 @@ async function runQrVerification() {
       const bin5Span = spans.find(s => s.innerText === 'BIN-005');
       if (bin5Span) {
         const card = bin5Span.closest('div.rounded-2xl');
-        const toggleBtn = card.querySelector('button[title*="toggle"]');
+        const toggleBtn = card ? card.querySelector('button[title*="toggle"]') : null;
         if (toggleBtn) toggleBtn.click();
       }
     })()`);
@@ -440,6 +444,15 @@ async function runQrVerification() {
     // -------------------------------------------------------------------------
     console.log('\n--- TEST SUITE 10: Complaint Submission Across All 5 Canonical Bins ---');
 
+    // Authenticate as citizen / customer before reporting
+    await navigate('http://127.0.0.1:3000/login');
+    await evaluate(`(() => {
+      const btns = Array.from(document.querySelectorAll('button'));
+      const customerBtn = btns.find(b => b.innerText.includes('Enter Customer Dashboard'));
+      if (customerBtn) customerBtn.click();
+    })()`);
+    await new Promise(r => setTimeout(r, 600));
+
     const testSubmissions = [
       { code: 'BIN-001', category: 'Overflowing Waste', desc: 'Main block bin overflowing onto walkway', expectedLoc: 'Main Block' },
       { code: 'BIN-002', category: 'Bad Smell', desc: 'Rotting cafeteria food odor', expectedLoc: 'Cafeteria' },
@@ -455,7 +468,7 @@ async function runQrVerification() {
       await new Promise(r => setTimeout(r, 400));
 
       // Fill in and submit the form
-      const subResult = await evaluate(`(() => {
+      await evaluate(`(() => {
         // Select category
         const catCard = document.querySelector('[data-category-card="${sub.category}"]');
         if (catCard) catCard.click();
@@ -470,17 +483,13 @@ async function runQrVerification() {
         // Fill reporter
         const nameInput = document.querySelector('input[placeholder*="Your Name"]');
         if (nameInput) {
-          nameInput.value = "Citizen Tester";
+          nameInput.value = "Ananya Sharma";
           nameInput.dispatchEvent(new Event('input', { bubbles: true }));
         }
 
         // Submit
         const submitBtn = document.querySelector('button[type="submit"]');
-        if (submitBtn) {
-          submitBtn.click();
-          return true;
-        }
-        return false;
+        if (submitBtn) submitBtn.click();
       })()`);
 
       // Wait for success screen navigation
@@ -507,11 +516,20 @@ async function runQrVerification() {
     // -------------------------------------------------------------------------
     console.log('\n--- TEST SUITE 11: Admin Dashboard Verification & Complaint Triage ---');
 
+    // Switch to Admin Portal
+    await navigate('http://127.0.0.1:3000/login');
+    await evaluate(`(() => {
+      const btns = Array.from(document.querySelectorAll('button'));
+      const adminBtn = btns.find(b => b.innerText.includes('Enter Admin Dashboard'));
+      if (adminBtn) adminBtn.click();
+    })()`);
+    await new Promise(r => setTimeout(r, 600));
+
     await navigate('http://127.0.0.1:3000/admin/complaints');
     await new Promise(r => setTimeout(r, 600));
 
     const adminComplaintsCheck = await evaluate(`(() => {
-      const stored = localStorage.getItem('hailo_complaints');
+      const stored = localStorage.getItem('hailo_v3_complaints');
       const complaints = stored ? JSON.parse(stored) : [];
       return complaints.map(c => ({
         id: c.id,
@@ -533,7 +551,7 @@ async function runQrVerification() {
     console.log(`\nTesting Admin cleaning triage workflow on ${testComplaint.cmpId} (${testComplaint.code})...`);
 
     const triageWorkflowResult = await evaluate(`(() => {
-      const stored = localStorage.getItem('hailo_complaints');
+      const stored = localStorage.getItem('hailo_v3_complaints');
       const complaints = stored ? JSON.parse(stored) : [];
       const target = complaints.find(c => c.complaintCode === '${testComplaint.cmpId}');
       if (!target) return { error: 'Target complaint not found' };
@@ -554,7 +572,7 @@ async function runQrVerification() {
       target.status = 'RESOLVED';
       target.resolvedAt = new Date().toISOString();
 
-      localStorage.setItem('hailo_complaints', JSON.stringify(complaints));
+      localStorage.setItem('hailo_v3_complaints', JSON.stringify(complaints));
 
       return {
         resolvedStatus: target.status,
@@ -570,11 +588,20 @@ async function runQrVerification() {
     assert(triageWorkflowResult.hasTimestamp, 'Resolution timestamp accurately logged');
 
     // -------------------------------------------------------------------------
-    // TEST 12: Customer Complaint Tracking Verification
+    // TEST 12: Customer Portal Complaint Tracking
     // -------------------------------------------------------------------------
     console.log('\n--- TEST SUITE 12: Customer Portal Complaint Tracking ---');
 
-    await navigate('http://127.0.0.1:3000/customer/complaints');
+    // Log in as Customer to inspect citizen complaint tracking
+    await navigate('http://127.0.0.1:3000/login');
+    await evaluate(`(() => {
+      const btns = Array.from(document.querySelectorAll('button'));
+      const customerBtn = btns.find(b => b.innerText.includes('Enter Customer Dashboard'));
+      if (customerBtn) customerBtn.click();
+    })()`);
+    await new Promise(r => setTimeout(r, 600));
+
+    await navigate('http://127.0.0.1:3000/customer/reports');
     await new Promise(r => setTimeout(r, 600));
 
     const customerViewCheck = await evaluate(`(() => {
