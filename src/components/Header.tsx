@@ -25,11 +25,15 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const { 
     hardwareState, 
-    triggerDemoAutoCycle, 
     demoMode, 
     setDemoMode,
-    overflowCount
+    overflowCount,
+    showToast
   } = useApp();
+
+  const handleRefresh = () => {
+    showToast('info', 'Sensor telemetry and fleet status refreshed.', 'System Refreshed');
+  };
 
   return (
     <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200 px-4 sm:px-8 py-3.5 flex items-center justify-between">
@@ -92,7 +96,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Refresh button */}
         <button
-          onClick={triggerDemoAutoCycle}
+          onClick={handleRefresh}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-xs transition-colors"
           title="Refresh Sensor Telemetry"
         >

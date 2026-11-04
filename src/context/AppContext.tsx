@@ -90,6 +90,7 @@ interface AppContextType {
     citizenName?: string;
     citizenContact?: string;
   }) => Complaint;
+  clearComplaints: () => void;
   updateComplaintStatus: (
     complaintId: string, 
     status: ComplaintStatus, 
@@ -236,18 +237,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return initialEVFleet;
   });
 
-  // Complaints (Only actual records, no fake sample entries)
+  // Helper to detect demo, preloaded, and automated fake complaints
+  const isDemoComplaintRecord = (c: any): boolean => {
+    if (!c || !c.complaintCode) return true;
+    if (c.id === 'cmp-000' || c.isDemo) return true;
+    const name = (c.citizenName || '').toLowerCase().trim();
+    const desc = (c.description || '').toLowerCase().trim();
+    const contact = (c.citizenContact || '').toLowerCase().trim();
+    
+    // Filter known fake demo signatures
+    if (name === 'priya sharma (student)' ||
+        name === 'priya sharma' ||
+        name === 'rahul verma' ||
+        name === 'iot ultrasonic monitor (auto-trigger)' ||
+        name === 'sample record' ||
+        name === 'system automation' ||
+        name.includes('demo flow') ||
+        name.includes('sample') ||
+        name.includes('auto-trigger')) {
+      return true;
+    }
+
+    if (desc.includes('hardware telemetry threshold exceeded') ||
+        desc.includes('the waste bin is full and starting to overflow. please collect as soon as possible') ||
+        desc.includes('the bin is full and needs immediate collection')) {
+      return true;
+    }
+
+    if (contact === 'telemetry@hailo-system.internal') {
+      return true;
+    }
+
+    return false;
+  };
+
+  // Complaints (Strictly genuine citizen reports; initially empty)
   const [complaints, setComplaints] = useState<Complaint[]>(() => {
+    if (typeof window === 'undefined') return [];
     const saved = localStorage.getItem(STORAGE_KEYS.COMPLAINTS);
     if (saved) {
       try { 
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter(c => c.id !== 'cmp-000' && c.citizenName !== 'Sample Record');
+          const genuine = parsed.filter(c => !isDemoComplaintRecord(c));
+          localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(genuine));
+          return genuine;
         }
       } catch (e) { /* fallback */ }
     }
-    return initialComplaints;
+    return [];
   });
 
   // Registered Cleaning Staff Roster
@@ -1044,28 +1082,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('success', 'System preferences saved successfully.', 'Settings Saved');
   };
 
-  // Automated full demo flow test trigger for evaluation (Steps 1-12)
+  // Clear all complaints from database and storage
+  const clearComplaints = () => {
+    setComplaints([]);
+    setCollectionTasks(prev => prev.filter(t => !t.complaintId));
+    localStorage.removeItem(STORAGE_KEYS.COMPLAINTS);
+    logActivity('COMPLAINTS_CLEARED', 'Admin', 'Purged all complaint records from storage');
+    showToast('info', 'All complaints have been cleared from the database.', 'Complaints Reset');
+  };
+
+  // Hardware Simulation fill level trigger (Does NOT create complaints)
   const triggerDemoStepFlow = () => {
-    // 1. Ensure BIN-003 is 94% Full
     updateBinFillLevel('BIN-003', 94);
-    // 2. Submit a demo complaint on BIN-003
-    const comp = createComplaint({
-      binCode: 'BIN-003',
-      category: 'Bin is Full',
-      description: 'The bin is full and needs immediate collection.',
-      citizenName: currentUser?.name || 'Rahul Verma',
-      citizenContact: '+91 98765 43210'
-    });
-    showToast('success', `Simulated Step: Created ${comp.complaintCode} & dispatched EV-01.`, 'Demo Flow Injected');
+    showToast('info', 'Simulated ultrasonic sensor fill level on BIN-003 updated to 94%.', 'Sensor Telemetry Updated');
   };
 
   const resetAllDemoData = () => {
     setBins(initialActiveBins);
     setEvFleet(initialEVFleet);
-    setComplaints(initialComplaints);
+    setComplaints([]); // Real complaints start empty
     setRegisteredStaff(initialRegisteredStaff);
     setCollectionTasks([]);
-    setFeedbacks([]); // Real feedback starts empty!
+    setFeedbacks([]); // Real feedback starts empty
     setActivityLogs(initialActivityLogs);
     setHardwareState({
       esp32Connected: true,
@@ -1077,8 +1115,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       targetBinCode: 'BIN-003',
       isSimulating: false
     });
-    localStorage.clear();
-    showToast('success', 'All system records, bins, EV fleet, and demo data restored to defaults.', 'System Reset');
+    localStorage.removeItem(STORAGE_KEYS.COMPLAINTS);
+    localStorage.removeItem(STORAGE_KEYS.TASKS);
+    localStorage.removeItem(STORAGE_KEYS.FEEDBACK);
+    showToast('success', 'Demo data cleared. Complaint records reset to empty.', 'System Reset');
   };
 
   const triggerDemoOverflow = () => {
@@ -1088,18 +1128,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const triggerDemoComplaint = () => {
-    createComplaint({
-      binCode: 'BIN-002',
-      category: 'Bin is Full',
-      description: 'The waste bin is full and starting to overflow. Please collect as soon as possible.',
-      citizenName: 'Priya Sharma (Student)',
-      citizenContact: '+91 98765 43210'
-    });
-    showToast('warning', 'New citizen complaint filed for BIN-002! Automated EV assignment initiated.', 'Report Submitted');
+    showToast('info', 'Demo complaint generation is disabled. Please submit reports through dustbin QR placards or the report form.', 'Demo Generation Disabled');
   };
 
   const triggerDemoAutoCycle = () => {
-    triggerDemoStepFlow();
+    showToast('info', 'Telemetry and system status refreshed.', 'System Refreshed');
   };
 
   // Derived metrics
@@ -1153,6 +1186,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         registeredStaff,
         getComplaintById,
         createComplaint,
+        clearComplaints,
         updateComplaintStatus,
         acceptComplaint,
         rejectComplaint,

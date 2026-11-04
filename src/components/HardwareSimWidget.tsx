@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { useRouter } from '../router/Router';
 import { 
   Cpu, 
   Activity, 
@@ -21,6 +22,7 @@ interface HardwareSimWidgetProps {
 }
 
 export const HardwareSimWidget: React.FC<HardwareSimWidgetProps> = ({ isOpen, onClose }) => {
+  const { navigate } = useRouter();
   const { 
     hardwareState, 
     setSimulatedFillLevel, 
@@ -29,7 +31,6 @@ export const HardwareSimWidget: React.FC<HardwareSimWidgetProps> = ({ isOpen, on
     bins,
     getBinByCode,
     triggerDemoOverflow,
-    triggerDemoComplaint,
     resetAllDemoData
   } = useApp();
 
@@ -257,11 +258,15 @@ export const HardwareSimWidget: React.FC<HardwareSimWidgetProps> = ({ isOpen, on
                 Trigger Overflow
               </button>
               <button
-                onClick={triggerDemoComplaint}
+                onClick={() => {
+                  onClose();
+                  navigate('/report');
+                }}
                 className="flex items-center justify-center gap-1.5 p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold hover:bg-amber-100 transition-colors"
+                title="Open citizen complaint reporting form"
               >
                 <Zap className="w-3.5 h-3.5 text-amber-600" />
-                New Citizen Report
+                Submit Report
               </button>
               <button
                 onClick={resetAllDemoData}

@@ -126,6 +126,7 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
         {/* Top Navbar */}
         <div className="flex items-center justify-between">
           <button
+            type="button"
             onClick={() => navigate(isAdmin ? '/admin/dashboard' : '/customer/dashboard')}
             className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs"
           >
@@ -467,6 +468,8 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
               {/* Submit Button */}
               <button
                 type="submit"
+                id="submit-report-btn"
+                data-testid="submit-report-btn"
                 disabled={isSubmitting}
                 className={`w-full py-3.5 px-4 rounded-xl text-white font-extrabold text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg transition-all ${
                   isSubmitting 

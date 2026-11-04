@@ -48,10 +48,10 @@ export const DemoToolbar: React.FC<{ onOpenSimModal: () => void }> = ({ onOpenSi
             <button
               onClick={triggerDemoStepFlow}
               className="px-2.5 py-1.5 rounded-lg bg-purple-600/90 hover:bg-purple-600 text-white font-bold flex items-center gap-1 shadow-xs transition-colors"
-              title="Inject Demo Step Flow (Report BIN-003 & Dispatch EV-01)"
+              title="Simulate ultrasonic sensor telemetry reading on BIN-003"
             >
               <Zap className="w-3 h-3 text-amber-300" />
-              <span>Step 4-6 Flow</span>
+              <span>Simulate High Sensor</span>
             </button>
 
             <button

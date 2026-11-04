@@ -36,7 +36,7 @@ export const ComplaintsPage: React.FC = () => {
     assignStaffToComplaint,
     reassignStaffToComplaint,
     uploadAfterCleaningPhoto,
-    triggerDemoComplaint,
+    clearComplaints,
     showToast 
   } = useApp();
   const { navigate } = useRouter();
@@ -44,9 +44,7 @@ export const ComplaintsPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [priorityFilter, setPriorityFilter] = useState<string>('ALL');
-  const [selectedComplaintId, setSelectedComplaintId] = useState<string | null>(
-    complaints[0]?.id || null
-  );
+  const [selectedComplaintId, setSelectedComplaintId] = useState<string | null>(null);
 
   // Rejection reason modal / inline state
   const [isRejecting, setIsRejecting] = useState(false);
@@ -65,8 +63,8 @@ export const ComplaintsPage: React.FC = () => {
   // File input ref for after-cleaning photo
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Always derive selectedComplaint directly from fresh context complaints
-  const selectedComplaint = complaints.find(c => c.id === selectedComplaintId) || complaints[0] || null;
+  // Always derive selectedComplaint directly from fresh context complaints without selecting fake complaints
+  const selectedComplaint = complaints.find(c => c.id === selectedComplaintId) || (complaints.length > 0 ? complaints[0] : null);
 
   const filteredComplaints = complaints.filter(c => {
     const s = search.toLowerCase();
@@ -230,13 +228,25 @@ export const ComplaintsPage: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={triggerDemoComplaint}
-          className="px-3.5 py-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold flex items-center gap-1.5 transition-colors"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-          <span>Simulate New Citizen Report</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {complaints.length > 0 && (
+            <button
+              type="button"
+              onClick={clearComplaints}
+              className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 text-slate-600 text-xs font-semibold transition-colors"
+              title="Clear all complaints from storage"
+            >
+              Clear All Complaints
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => navigate('/report')}
+            className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs"
+          >
+            <span>Submit New Report</span>
+          </button>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}
@@ -308,8 +318,16 @@ export const ComplaintsPage: React.FC = () => {
               <tbody className="divide-y divide-slate-100">
                 {filteredComplaints.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-12 text-center text-slate-400">
-                      No complaints match the filter criteria.
+                    <td colSpan={6} className="py-16 text-center text-slate-400">
+                      <div className="flex flex-col items-center justify-center space-y-1.5">
+                        <CheckCircle2 className="w-8 h-8 text-emerald-500/40" />
+                        <p className="font-bold text-slate-700 text-sm">No complaints received yet.</p>
+                        <p className="text-xs text-slate-400">
+                          {search || statusFilter !== 'ALL' || priorityFilter !== 'ALL'
+                            ? 'No complaints match the current filter criteria.'
+                            : 'New citizen reports submitted via dustbin QR placards will appear here in real time.'}
+                        </p>
+                      </div>
                     </td>
                   </tr>
                 ) : (
@@ -426,12 +444,12 @@ export const ComplaintsPage: React.FC = () => {
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
                 <div>
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Target Dustbin</span>
-                  <div className="font-mono font-bold text-sm text-emerald-800">
+                  <div data-testid="detail-bin-code" className="font-mono font-bold text-sm text-emerald-800">
                     {selectedComplaint.binCode}
                   </div>
                   <p className="text-xs text-slate-600 mt-0.5 flex items-center gap-1">
                     <MapPin className="w-3 h-3 text-slate-400" />
-                    <span>{selectedComplaint.location}</span>
+                    <span data-testid="detail-bin-location">{selectedComplaint.location}</span>
                   </p>
                 </div>
                 <button
@@ -901,9 +919,14 @@ export const ComplaintsPage: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div className="py-24 text-center text-slate-400">
-              <AlertCircle className="w-10 h-10 mx-auto mb-2 opacity-50" />
-              Select a complaint from the table to view details.
+            <div className="py-24 text-center text-slate-400 flex flex-col items-center justify-center space-y-2">
+              <AlertCircle className="w-10 h-10 text-slate-300 mx-auto" />
+              <p className="font-bold text-slate-600 text-sm">No complaints received yet.</p>
+              <p className="text-xs text-slate-400 max-w-xs">
+                {complaints.length === 0 
+                  ? 'When citizens scan dustbin QR placards and submit reports, incident details and cleaning triage controls will be available here.'
+                  : 'Select a complaint from the table to view details and assign cleaning staff.'}
+              </p>
             </div>
           )}
         </div>
