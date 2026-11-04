@@ -157,7 +157,10 @@ export const CustomerDashboardPage: React.FC = () => {
                     <td className="py-3.5 px-3 font-mono font-bold text-slate-900">{c.complaintCode}</td>
                     <td className="py-3.5 px-3 font-mono font-bold text-emerald-800">{c.binCode}</td>
                     <td className="py-3.5 px-3 text-slate-600 font-medium">{c.location}</td>
-                    <td className="py-3.5 px-3 font-semibold text-slate-800">{c.category}</td>
+                    <td className="py-3.5 px-3">
+                      <span className="font-semibold text-slate-800 block">{c.category}</span>
+                      <span className="text-[10px] text-slate-400 block font-normal">{c.createdAt}</span>
+                    </td>
                     <td className="py-3.5 px-3">
                       {c.assignedStaff ? (
                         <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800">

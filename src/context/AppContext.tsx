@@ -744,6 +744,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const detectedSource = data.source || (currentUser?.role === 'ADMIN' ? 'ADMIN' : (currentUser?.role === 'CUSTOMER' ? 'CUSTOMER' : 'QR_SCAN'));
 
+    const actualTimestamp = formatActualTimestamp();
+
     const newComplaint: Complaint = {
       id: `cmp-${Date.now()}`,
       complaintCode: nextCode,
@@ -759,8 +761,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       source: detectedSource,
       assignedEV: assignedEVCode,
       collectionTaskId: taskId,
-      createdAt: 'Just now',
-      reportedAt: 'Just now',
+      createdAt: actualTimestamp,
+      reportedAt: actualTimestamp,
       citizenName: data.citizenName || currentUser?.name || 'Anonymous Citizen',
       citizenContact: data.citizenContact || currentUser?.phone || currentUser?.email || 'Not provided'
     };
@@ -859,8 +861,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const actualTimestamp = formatActualTimestamp();
-    const resolvedStaffName = options.assignedStaff || targetComplaint.assignedStaff || 'Municipal Sanitation Staff';
-    const resolvedStaffId = options.assignedStaffId || targetComplaint.assignedStaffId;
+    const resolvedStaffName = options.assignedStaff !== undefined ? options.assignedStaff : targetComplaint.assignedStaff;
+    const resolvedStaffId = options.assignedStaffId !== undefined ? options.assignedStaffId : targetComplaint.assignedStaffId;
 
     setComplaints(prev => prev.map(c => {
       if (c.id === complaintId || c.complaintCode === complaintId) {
@@ -868,8 +870,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ...c,
           status,
           adminNote: options.adminNote !== undefined ? options.adminNote : c.adminNote,
-          assignedStaff: options.assignedStaff !== undefined ? options.assignedStaff : c.assignedStaff,
-          assignedStaffId: options.assignedStaffId !== undefined ? options.assignedStaffId : c.assignedStaffId,
+          assignedStaff: resolvedStaffName,
+          assignedStaffId: resolvedStaffId,
           afterCleaningPhotoUrl: options.afterCleaningPhotoUrl !== undefined ? options.afterCleaningPhotoUrl : c.afterCleaningPhotoUrl
         };
 
@@ -882,7 +884,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           updated.assignedAt = actualTimestamp;
         } else if (normStatus === 'RESOLVED') {
           updated.resolvedAt = actualTimestamp;
-          updated.resolutionMethod = `Manual Sanitation (${resolvedStaffName})`;
+          updated.resolutionMethod = `Manual Sanitation (${resolvedStaffName || 'Cleaning Staff'})`;
         }
 
         return updated;
@@ -924,7 +926,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               {
                 id: `col-${Date.now()}`,
                 collectedAt: actualTimestamp,
-                collectorName: resolvedStaffName,
+                collectorName: resolvedStaffName || 'Municipal Sanitation Staff',
                 amountKg: clearedKg
               },
               ...(b.collections || [])
@@ -952,8 +954,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         complaintCode: targetComplaint.complaintCode,
         status,
         adminNote: options.adminNote !== undefined ? options.adminNote : targetComplaint.adminNote,
-        assignedStaff: resolvedStaffName,
-        assignedStaffId: resolvedStaffId,
+        assignedStaff: resolvedStaffName || undefined,
+        assignedStaffId: resolvedStaffId || undefined,
         afterCleaningPhotoUrl: options.afterCleaningPhotoUrl !== undefined ? options.afterCleaningPhotoUrl : targetComplaint.afterCleaningPhotoUrl
       };
 
@@ -965,7 +967,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (normStatus === 'ASSIGNED') payload.assignedAt = actualTimestamp;
       if (normStatus === 'RESOLVED') {
         payload.resolvedAt = actualTimestamp;
-        payload.resolutionMethod = `Manual Sanitation (${resolvedStaffName})`;
+        payload.resolutionMethod = `Manual Sanitation (${resolvedStaffName || 'Cleaning Staff'})`;
       }
 
       fetch('/api/complaints', {

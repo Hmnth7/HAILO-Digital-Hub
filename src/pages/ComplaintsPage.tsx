@@ -805,6 +805,7 @@ export const ComplaintsPage: React.FC = () => {
                         key={st}
                         type="button"
                         data-status-btn={st}
+                        data-testid={`status-btn-${st.toLowerCase().replace(/\s+/g, '-')}`}
                         onClick={() => handleDirectStatusChange(st)}
                         className={`py-2 px-1 rounded-xl text-[10px] font-bold transition-all border text-center ${
                           isCurrent
