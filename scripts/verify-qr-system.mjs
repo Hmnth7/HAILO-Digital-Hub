@@ -356,6 +356,30 @@ async function runQrVerification() {
     })()`);
     assert(bin2Page.hasCode && bin2Page.hasLocation && bin2Page.notOtherBin, '/report/BIN-002 auto-identifies BIN-002 ("Cafeteria") and does not show other bins');
 
+    // Test BIN-002 with trailing slash & refresh
+    await navigate('http://127.0.0.1:3000/report/BIN-002/');
+    const bin2SlashPage = await evaluate(`(() => {
+      const text = document.body.innerText;
+      return {
+        hasCode: text.includes('BIN-002'),
+        hasLocation: text.includes('Cafeteria'),
+        notOtherBin: !text.includes('Main Block')
+      };
+    })()`);
+    assert(bin2SlashPage.hasCode && bin2SlashPage.hasLocation && bin2SlashPage.notOtherBin, '/report/BIN-002/ (with trailing slash) auto-identifies BIN-002 ("Cafeteria")');
+
+    // Reload/Refresh page test
+    await send('Page.reload');
+    await new Promise(r => setTimeout(r, 600));
+    const bin2ReloadPage = await evaluate(`(() => {
+      const text = document.body.innerText;
+      return {
+        hasCode: text.includes('BIN-002'),
+        hasLocation: text.includes('Cafeteria')
+      };
+    })()`);
+    assert(bin2ReloadPage.hasCode && bin2ReloadPage.hasLocation, 'Page reload on /report/BIN-002 retains BIN-002 and "Cafeteria"');
+
     // Test BIN-003
     await navigate('http://127.0.0.1:3000/report/BIN-003');
     const bin3Page = await evaluate(`(() => {
@@ -467,12 +491,15 @@ async function runQrVerification() {
       await navigate(`http://127.0.0.1:3000/report/${sub.code}`);
       await new Promise(r => setTimeout(r, 400));
 
-      // Fill in and submit the form
+      // 1. Select category and wait for state to update
       await evaluate(`(() => {
-        // Select category
         const catCard = document.querySelector('[data-category-card="${sub.category}"]');
         if (catCard) catCard.click();
+      })()`);
+      await new Promise(r => setTimeout(r, 200));
 
+      // 2. Fill description, reporter, and submit
+      await evaluate(`(() => {
         // Fill description
         const descInput = document.querySelector('textarea');
         if (descInput) {
@@ -493,19 +520,25 @@ async function runQrVerification() {
       })()`);
 
       // Wait for success screen navigation
-      await new Promise(r => setTimeout(r, 700));
+      await new Promise(r => setTimeout(r, 800));
 
       const successInfo = await evaluate(`(() => {
         const text = document.body.innerText;
         const codeMatch = text.match(/CMP-[A-Z0-9-]+/);
         return {
           isSuccessScreen: text.includes('Report Submitted Successfully') || text.includes('Reference ID') || window.location.pathname.includes('/report/success'),
-          complaintCode: codeMatch ? codeMatch[0] : null
+          complaintCode: codeMatch ? codeMatch[0] : null,
+          hasExactBin: text.includes("${sub.code}"),
+          hasExactLocation: text.includes("${sub.expectedLoc}"),
+          hasExactCategory: text.includes("${sub.category}")
         };
       })()`);
 
       assert(successInfo.isSuccessScreen, `Submitted report for ${sub.code} routed to success confirmation`);
       assert(!!successInfo.complaintCode, `Generated complaint code for ${sub.code}: ${successInfo.complaintCode}`);
+      assert(successInfo.hasExactBin, `Success screen displays exact bin code ${sub.code} (NOT hardcoded BIN-003)`);
+      assert(successInfo.hasExactLocation, `Success screen displays exact location "${sub.expectedLoc}" (NOT hardcoded Hostel)`);
+      assert(successInfo.hasExactCategory, `Success screen displays exact category "${sub.category}" (NOT hardcoded "Bin Full")`);
       if (successInfo.complaintCode) {
         generatedComplaintCodes.push({ code: sub.code, cmpId: successInfo.complaintCode, category: sub.category });
       }
@@ -544,6 +577,7 @@ async function runQrVerification() {
       const inAdmin = adminComplaintsCheck.find(c => c.code === gen.cmpId);
       assert(!!inAdmin, `Complaint ${gen.cmpId} appears in Admin persistence store`);
       assert(inAdmin && inAdmin.binCode === gen.code, `Complaint ${gen.cmpId} correctly associated with dustbin ${gen.code}`);
+      assert(inAdmin && inAdmin.category === gen.category, `Complaint ${gen.cmpId} correctly displays submitted category "${gen.category}" in Admin`);
     }
 
     // Test Full Resolution Workflow on the first complaint: Accept -> Assign Staff -> In Progress -> Upload Photo -> Resolve

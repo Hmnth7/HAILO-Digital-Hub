@@ -37,7 +37,7 @@ import { BinIdentificationPage } from './pages/BinIdentificationPage';
 
 export const App: React.FC = () => {
   const { currentPath, params, navigate } = useRouter();
-  const { currentUser, isAuthenticated, isAdmin, isCustomer } = useApp();
+  const { currentUser, isAuthenticated, isAdmin, isCustomer, bins } = useApp();
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [hardwareSimModalOpen, setHardwareSimModalOpen] = useState(false);
@@ -177,7 +177,7 @@ export const App: React.FC = () => {
 
           {(currentPath.startsWith('/admin/bins/') || currentPath.startsWith('/bins/')) && (
             <BinDetailsPage 
-              binCode={params.binCode || 'BIN-003'} 
+              binCode={params.binCode || bins[0]?.binCode || 'BIN-001'} 
               onOpenSimModal={() => setHardwareSimModalOpen(true)}
             />
           )}

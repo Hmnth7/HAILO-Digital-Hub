@@ -36,7 +36,23 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
   const { params, navigate } = useRouter();
   const { getBinByCode, createComplaint, showToast, bins, currentUser, isAdmin, hardwareState } = useApp();
 
-  const activeCode = (routeBinCode || params.binCode || '').toUpperCase();
+  // Robust resolution of Bin ID from prop, router param, or direct window.location
+  const activeCode = React.useMemo(() => {
+    if (routeBinCode) return routeBinCode.trim().toUpperCase();
+    if (params.binCode) return params.binCode.trim().toUpperCase();
+    if (typeof window !== 'undefined') {
+      const pathMatch = window.location.pathname.match(/\/report\/([A-Za-z0-9_-]+)/i);
+      if (pathMatch && pathMatch[1] && pathMatch[1].toLowerCase() !== 'success') {
+        return pathMatch[1].trim().toUpperCase();
+      }
+      const hashMatch = window.location.hash.match(/\/report\/([A-Za-z0-9_-]+)/i);
+      if (hashMatch && hashMatch[1] && hashMatch[1].toLowerCase() !== 'success') {
+        return hashMatch[1].trim().toUpperCase();
+      }
+    }
+    return '';
+  }, [routeBinCode, params.binCode]);
+
   const matchedBin = activeCode ? getBinByCode(activeCode) : undefined;
 
   useEffect(() => {
@@ -67,7 +83,7 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!matchedBin) {
       showToast('error', 'Cannot submit a report for an unregistered dustbin.', 'Invalid Bin ID');
@@ -82,11 +98,14 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
     if (isSubmitting) return;
     setIsSubmitting(true);
 
-    setTimeout(() => {
+    const hiddenInput = document.getElementById('selected-complaint-category') as HTMLInputElement | null;
+    const resolvedCategory = (hiddenInput?.value as ComplaintCategory) || selectedCategory;
+
+    try {
       const newComplaint = createComplaint({
         binCode: matchedBin.binCode,
-        category: selectedCategory,
-        description: description.trim() || `${selectedCategory} reported.`,
+        category: resolvedCategory,
+        description: description.trim() || `${resolvedCategory} reported on ${matchedBin.binCode}.`,
         photoUrl: photoUrl || undefined,
         citizenName: citizenName.trim() || undefined,
         citizenContact: citizenContact.trim() || undefined
@@ -94,7 +113,11 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
 
       setIsSubmitting(false);
       navigate(`/report/success/${newComplaint.complaintCode}`);
-    }, 400);
+    } catch (err) {
+      console.error('Failed to submit complaint', err);
+      setIsSubmitting(false);
+      showToast('error', 'Failed to submit report. Please try again.', 'Submission Error');
+    }
   };
 
   return (
@@ -284,6 +307,12 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
 
             {/* Complaint Form */}
             <form onSubmit={handleSubmit} className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-md space-y-6">
+              <input 
+                type="hidden" 
+                id="selected-complaint-category" 
+                name="complaintCategory" 
+                value={selectedCategory} 
+              />
               {/* Section: What's wrong with this bin? */}
               <div className="space-y-3">
                 <div>
@@ -300,12 +329,17 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
                     const isSelected = selectedCategory === cat.label;
 
                     return (
-                      <div
+                      <button
+                        type="button"
                         key={cat.label}
-                        role="button"
                         data-category-card={cat.label}
-                        onClick={() => setSelectedCategory(cat.label)}
-                        className={`p-3 rounded-xl border text-xs cursor-pointer transition-all flex items-start gap-2.5 ${
+                        data-selected={isSelected}
+                        onClick={() => {
+                          setSelectedCategory(cat.label);
+                          const hidden = document.getElementById('selected-complaint-category') as HTMLInputElement | null;
+                          if (hidden) hidden.value = cat.label;
+                        }}
+                        className={`p-3 rounded-xl border text-xs cursor-pointer transition-all flex items-start gap-2.5 text-left w-full ${
                           isSelected
                             ? 'border-emerald-600 bg-emerald-50/70 text-slate-900 shadow-2xs ring-1 ring-emerald-500/30'
                             : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
@@ -319,6 +353,15 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
                           {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
                         </div>
 
+                        <input
+                          type="radio"
+                          name="complaintCategory"
+                          value={cat.label}
+                          checked={isSelected}
+                          onChange={() => setSelectedCategory(cat.label)}
+                          className="sr-only"
+                        />
+
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1 font-bold">
                             <span>{cat.emoji}</span>
@@ -328,7 +371,7 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
                             {cat.description}
                           </p>
                         </div>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>

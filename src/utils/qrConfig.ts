@@ -129,7 +129,8 @@ export function clearProductionBaseUrl(): void {
  */
 export function getBinQrUrl(binCode: string): string {
   const base = getProductionBaseUrl();
-  const cleanCode = (binCode || 'BIN-001').trim().toUpperCase();
+  const cleanCode = (binCode || '').trim().toUpperCase();
+  if (!cleanCode) return '';
   return `${base}/report/${cleanCode}`;
 }
 

@@ -30,7 +30,7 @@ import {
   calculateDistanceCm,
   getPriorityForCategory
 } from '../data/mockData';
-import { getBinQrUrl } from '../utils/qrConfig';
+import { getBinQrUrl, setProductionBaseUrl, getProductionBaseUrl } from '../utils/qrConfig';
 
 export function formatActualTimestamp(date = new Date()): string {
   return date.toLocaleString('en-IN', {
@@ -134,6 +134,7 @@ interface AppContextType {
   // Settings
   settings: SystemSettings;
   updateSettings: (newSettings: Partial<SystemSettings>) => void;
+  updateProductionDomain: (newUrl: string) => void;
 
   // Toasts
   toasts: ToastMessage[];
@@ -671,7 +672,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: `cmp-${Date.now()}`,
       complaintCode: nextCode,
       customerId: currentUser?.role === 'CUSTOMER' ? currentUser.id : undefined,
-      binId: bin ? bin.id : 'bin-custom',
+      binId: bin ? bin.id : `bin-${data.binCode.toLowerCase()}`,
       binCode: data.binCode,
       location: bin ? bin.location : 'Campus Grounds',
       category: data.category,
@@ -686,12 +687,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       citizenContact: data.citizenContact || currentUser?.phone || currentUser?.email || 'Not provided'
     };
 
-    setComplaints(prev => [newComplaint, ...prev]);
+    setComplaints(prev => {
+      const updated = [newComplaint, ...prev];
+      try {
+        localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(updated));
+      } catch (e) {
+        console.error('Storage error syncing complaints', e);
+      }
+      return updated;
+    });
+
     logActivity('COMPLAINT_FILED', nextCode, `Citizen reported ${data.category} on ${data.binCode} (${priority} Priority)`);
 
     showToast('success', `Complaint ${nextCode} submitted for ${data.binCode}. Awaiting administrative review.`, 'Report Logged');
 
     return newComplaint;
+  };
+
+  const updateProductionDomain = (newUrl: string) => {
+    setProductionBaseUrl(newUrl);
+    const updatedBase = getProductionBaseUrl();
+    setBins(prev => {
+      const updated = prev.map(b => ({
+        ...b,
+        qrUrl: `${updatedBase}/report/${b.binCode}`
+      }));
+      try {
+        localStorage.setItem(STORAGE_KEYS.BINS, JSON.stringify(updated));
+      } catch (e) {
+        console.error('Storage error syncing bins', e);
+      }
+      return updated;
+    });
+    logActivity('PRODUCTION_DOMAIN_UPDATED', updatedBase, 'Regenerated all dustbin QR codes with new production base URL');
   };
 
   const updateComplaintStatus = (
@@ -1152,6 +1180,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         resetAllDemoData,
         settings,
         updateSettings,
+        updateProductionDomain,
         toasts,
         showToast,
         removeToast,

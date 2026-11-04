@@ -16,8 +16,45 @@ export const ComplaintSuccessPage: React.FC<{ complaintId?: string }> = ({ compl
   const { params, navigate } = useRouter();
   const { getComplaintById, complaints, isAdmin } = useApp();
 
-  const activeId = routeId || params.complaintId || 'CMP-001';
-  const complaint = getComplaintById(activeId) || complaints[0];
+  // Robust complaint code resolution: props -> params -> URL pathname/hash
+  const activeId = React.useMemo(() => {
+    if (routeId) return routeId.trim().toUpperCase();
+    if (params.complaintId) return params.complaintId.trim().toUpperCase();
+    if (typeof window !== 'undefined') {
+      const pathMatch = window.location.pathname.match(/\/report\/success\/([A-Za-z0-9_-]+)/i);
+      if (pathMatch && pathMatch[1]) return pathMatch[1].trim().toUpperCase();
+      const hashMatch = window.location.hash.match(/\/report\/success\/([A-Za-z0-9_-]+)/i);
+      if (hashMatch && hashMatch[1]) return hashMatch[1].trim().toUpperCase();
+    }
+    return '';
+  }, [routeId, params.complaintId]);
+
+  // Retrieve exact complaint from context OR immediate localStorage backup
+  // NEVER fall back to complaints[0], BIN-003, Hostel, or Bin Full
+  const complaint = React.useMemo(() => {
+    if (!activeId) return null;
+    const fromContext = getComplaintById(activeId);
+    if (fromContext) return fromContext;
+
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('hailo_v3_complaints');
+        if (saved) {
+          const list = JSON.parse(saved);
+          if (Array.isArray(list)) {
+            const found = list.find((c: any) => 
+              (c.complaintCode && c.complaintCode.toUpperCase() === activeId) ||
+              (c.id && c.id.toUpperCase() === activeId)
+            );
+            if (found) return found;
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    return null;
+  }, [activeId, complaints, getComplaintById]);
 
   useEffect(() => {
     try {
@@ -56,28 +93,28 @@ export const ComplaintSuccessPage: React.FC<{ complaintId?: string }> = ({ compl
           <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
             <span className="font-semibold text-slate-500">Complaint ID:</span>
             <span className="font-mono font-extrabold text-sm text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-200">
-              {complaint ? complaint.complaintCode : activeId}
+              {complaint ? complaint.complaintCode : (activeId || 'LOGGED')}
             </span>
           </div>
 
           <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
             <span className="font-semibold text-slate-500">Target Bin:</span>
             <span className="font-mono font-bold text-emerald-800">
-              {complaint ? complaint.binCode : 'BIN-003'}
+              {complaint ? complaint.binCode : 'Verified Dustbin'}
             </span>
           </div>
 
           <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
             <span className="font-semibold text-slate-500">Location:</span>
             <span className="font-medium text-slate-700">
-              {complaint ? complaint.location : 'Hostel'}
+              {complaint ? complaint.location : 'Campus Grounds'}
             </span>
           </div>
 
           <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
             <span className="font-semibold text-slate-500">Issue:</span>
             <span className="font-bold text-slate-800">
-              {complaint ? complaint.category : 'Bin Full'}
+              {complaint ? complaint.category : 'Submitted'}
             </span>
           </div>
 
@@ -92,7 +129,7 @@ export const ComplaintSuccessPage: React.FC<{ complaintId?: string }> = ({ compl
         </div>
 
         {/* EV Dispatched Notification Banner */}
-        {hasEV ? (
+        {hasEV && complaint ? (
           <div className="p-4 rounded-xl bg-purple-50 border border-purple-200 text-purple-950 text-xs text-left flex items-start gap-3">
             <Truck className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" />
             <div>

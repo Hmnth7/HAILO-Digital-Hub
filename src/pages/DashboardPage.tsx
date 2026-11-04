@@ -494,7 +494,7 @@ export const DashboardPage: React.FC<{ onOpenSimModal: () => void }> = ({ onOpen
               <div className="flex items-center justify-between p-2 rounded-lg bg-slate-800/60 border border-slate-700/50">
                 <span className="text-slate-400 font-medium">Ultrasonic Target:</span>
                 <span className="font-mono text-slate-200 font-bold">
-                  {hardwareState.targetBinCode} (Hostel)
+                  {hardwareState.targetBinCode} {bins.find(b => b.binCode === hardwareState.targetBinCode)?.location ? `(${bins.find(b => b.binCode === hardwareState.targetBinCode)?.location})` : ''}
                 </span>
               </div>
 

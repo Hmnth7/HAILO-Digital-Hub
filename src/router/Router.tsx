@@ -16,18 +16,30 @@ export const useRouter = () => {
   return context;
 };
 
+function normalizePath(raw: string): string {
+  if (!raw) return '/login';
+  // If starts with #/, strip #
+  let p = raw.startsWith('#/') ? raw.slice(1) : raw;
+  // Strip query strings and trailing fragments
+  p = p.split('?')[0].split('#')[0];
+  if (!p || p === '/' || p === '/index.html') {
+    return '/login';
+  }
+  // Strip trailing slashes (e.g. /report/BIN-002/ -> /report/BIN-002)
+  if (p.length > 1 && p.endsWith('/')) {
+    p = p.replace(/\/+$/, '');
+  }
+  return p;
+}
+
 function getInitialPath(): string {
   if (typeof window === 'undefined') return '/admin/dashboard';
   
   if (window.location.hash.startsWith('#/')) {
-    return window.location.hash.slice(1);
+    return normalizePath(window.location.hash);
   }
   
-  const pathname = window.location.pathname;
-  if (!pathname || pathname === '/' || pathname === '/index.html') {
-    return '/login';
-  }
-  return pathname;
+  return normalizePath(window.location.pathname);
 }
 
 export const CustomRouter: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -47,7 +59,8 @@ export const CustomRouter: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const navigate = (to: string) => {
-    const cleanTo = to.startsWith('/') ? to : `/${to}`;
+    const rawTo = to.startsWith('/') ? to : `/${to}`;
+    const cleanTo = normalizePath(rawTo);
     window.history.pushState({}, '', cleanTo);
     setCurrentPath(cleanTo);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -56,21 +69,21 @@ export const CustomRouter: React.FC<{ children: React.ReactNode }> = ({ children
   const params: Record<string, string> = {};
   
   // Match /report/success/:complaintId
-  const successMatch = currentPath.match(/^\/report\/success(?:\/([A-Za-z0-9_-]+))?$/i);
+  const successMatch = currentPath.match(/^\/report\/success(?:\/([A-Za-z0-9_-]+))?\/?$/i);
   if (successMatch) {
     if (successMatch[1]) {
-      params.complaintId = successMatch[1];
+      params.complaintId = successMatch[1].toUpperCase();
     }
   } else {
     // Match /report/:binCode
-    const reportMatch = currentPath.match(/^\/report\/([A-Za-z0-9_-]+)$/i);
+    const reportMatch = currentPath.match(/^\/report\/([A-Za-z0-9_-]+)\/?$/i);
     if (reportMatch && reportMatch[1].toLowerCase() !== 'success') {
       params.binCode = reportMatch[1].toUpperCase();
     }
   }
 
   // Match /admin/bins/:binCode or /bins/:binCode
-  const binDetailMatch = currentPath.match(/^\/(?:admin\/)?bins\/([A-Za-z0-9_-]+)$/i);
+  const binDetailMatch = currentPath.match(/^\/(?:admin\/)?bins\/([A-Za-z0-9_-]+)\/?$/i);
   if (binDetailMatch) {
     params.binCode = binDetailMatch[1].toUpperCase();
   }

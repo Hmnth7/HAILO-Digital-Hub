@@ -43,7 +43,7 @@ import {
 import { Bin } from '../types';
 
 export const QRManagementPage: React.FC = () => {
-  const { bins, toggleBinActiveStatus, showToast } = useApp();
+  const { bins, toggleBinActiveStatus, updateProductionDomain, showToast } = useApp();
   const { navigate } = useRouter();
 
   const [search, setSearch] = useState('');
@@ -88,14 +88,16 @@ export const QRManagementPage: React.FC = () => {
       showToast('error', 'Please enter a valid public HTTPS URL.', 'Invalid URL');
       return;
     }
-    setProductionBaseUrl(customDomain.trim());
+    updateProductionDomain(customDomain.trim());
     setIsEditingDomain(false);
     showToast('success', `Production QR domain updated to ${getProductionBaseUrl()}`, 'Public URL Saved');
   };
 
   const handleResetDomain = () => {
     clearProductionBaseUrl();
-    setCustomDomain(getProductionBaseUrl());
+    const defaultUrl = getProductionBaseUrl();
+    setCustomDomain(defaultUrl);
+    updateProductionDomain(defaultUrl);
     setIsEditingDomain(false);
     showToast('info', 'Public domain reset to system default.', 'Domain Reset');
   };
