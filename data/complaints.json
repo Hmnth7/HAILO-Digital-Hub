@@ -1,0 +1,53 @@
+[
+  {
+    "id": "cmp-1793807690900",
+    "complaintCode": "CMP-001",
+    "binId": "bin-001",
+    "binCode": "BIN-001",
+    "location": "Main Block",
+    "category": "Overflowing Waste",
+    "description": "Overflowing Waste reported on BIN-001.",
+    "priority": "CRITICAL",
+    "status": "PENDING",
+    "source": "ADMIN",
+    "assignedEV": "EV-01",
+    "collectionTaskId": "COL-001",
+    "createdAt": "Just now",
+    "reportedAt": "Just now",
+    "citizenName": "Admin Supervisor",
+    "citizenContact": "admin@hailo.digitalhub.ac"
+  },
+  {
+    "id": "cmp-1793807701756",
+    "complaintCode": "CMP-002",
+    "customerId": "user-customer-1",
+    "binId": "bin-002",
+    "binCode": "BIN-002",
+    "location": "Cafeteria",
+    "category": "Bad Smell",
+    "description": "Bad Smell reported on BIN-002.",
+    "priority": "MEDIUM",
+    "status": "PENDING",
+    "source": "CUSTOMER",
+    "createdAt": "Just now",
+    "reportedAt": "Just now",
+    "citizenName": "Rahul Verma",
+    "citizenContact": "rahul.verma@campus.edu"
+  },
+  {
+    "id": "cmp-1793807709355",
+    "complaintCode": "CMP-003",
+    "binId": "bin-003",
+    "binCode": "BIN-003",
+    "location": "Hostel",
+    "category": "Needs Cleaning",
+    "description": "Needs Cleaning reported on BIN-003.",
+    "priority": "MEDIUM",
+    "status": "PENDING",
+    "source": "QR_SCAN",
+    "createdAt": "Just now",
+    "reportedAt": "Just now",
+    "citizenName": "Anonymous Citizen",
+    "citizenContact": "Not provided"
+  }
+]

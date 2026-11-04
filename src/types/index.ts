@@ -133,6 +133,7 @@ export interface Complaint {
   resolutionMethod?: string; // e.g. "Sanitation Verification (Rajesh Kumar)"
   citizenName?: string;
   citizenContact?: string;
+  source?: 'ADMIN' | 'CUSTOMER' | 'QR_SCAN' | string;
   adminNote?: string;
 }
 

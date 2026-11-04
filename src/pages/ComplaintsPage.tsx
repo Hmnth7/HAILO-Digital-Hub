@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { useRouter } from '../router/Router';
 import { Complaint, ComplaintStatus, ComplaintPriority } from '../types';
@@ -65,6 +65,14 @@ export const ComplaintsPage: React.FC = () => {
 
   // Always derive selectedComplaint directly from fresh context complaints without selecting fake complaints
   const selectedComplaint = complaints.find(c => c.id === selectedComplaintId) || (complaints.length > 0 ? complaints[0] : null);
+
+  useEffect(() => {
+    if (selectedComplaint) {
+      if (!selectedStaffCode || selectedComplaint.assignedStaffId) {
+        setSelectedStaffCode(selectedComplaint.assignedStaffId || registeredStaff[0]?.staffCode || '');
+      }
+    }
+  }, [selectedComplaint?.id, selectedComplaint?.assignedStaffId, registeredStaff]);
 
   const filteredComplaints = complaints.filter(c => {
     const s = search.toLowerCase();
@@ -135,16 +143,17 @@ export const ComplaintsPage: React.FC = () => {
   };
 
   const handleAssignStaff = (reassign = false) => {
-    if (!selectedComplaint || !selectedStaffCode) {
+    const staffCodeToUse = selectedStaffCode || registeredStaff[0]?.staffCode || '';
+    if (!selectedComplaint || !staffCodeToUse) {
       showToast('error', 'Please select a registered cleaning staff member from the list.', 'Selection Required');
       return;
     }
     setResolutionError(null);
     if (reassign) {
-      reassignStaffToComplaint(selectedComplaint.id, selectedStaffCode);
+      reassignStaffToComplaint(selectedComplaint.id, staffCodeToUse);
       setIsReassigning(false);
     } else {
-      assignStaffToComplaint(selectedComplaint.id, selectedStaffCode);
+      assignStaffToComplaint(selectedComplaint.id, staffCodeToUse);
     }
   };
 
@@ -350,8 +359,22 @@ export const ComplaintsPage: React.FC = () => {
                           isSelected ? 'bg-emerald-50/70 border-l-4 border-l-emerald-600' : ''
                         }`}
                       >
-                        <td className="py-3.5 px-3 font-mono font-bold text-slate-900">
-                          {c.complaintCode}
+                        <td className="py-3.5 px-3">
+                          <span className="font-mono font-bold text-slate-900 block">
+                            {c.complaintCode}
+                          </span>
+                          <span 
+                            data-source-badge={c.source || 'QR_SCAN'} 
+                            className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full inline-block mt-0.5 ${
+                              c.source === 'ADMIN' 
+                                ? 'bg-slate-100 text-slate-700 border border-slate-200' 
+                                : c.source === 'CUSTOMER' 
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200' 
+                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            }`}
+                          >
+                            {c.source === 'ADMIN' ? 'Admin Portal' : c.source === 'CUSTOMER' ? 'Customer Portal' : 'QR Scan'}
+                          </span>
                         </td>
                         <td className="py-3.5 px-3">
                           <span className="font-mono font-semibold text-emerald-700">
@@ -497,7 +520,22 @@ export const ComplaintsPage: React.FC = () => {
               )}
 
               {/* Citizen Information */}
-              <div className="text-xs text-slate-600 space-y-1 p-3 rounded-xl bg-slate-50 border border-slate-200/70">
+              <div className="text-xs text-slate-600 space-y-1.5 p-3.5 rounded-xl bg-slate-50 border border-slate-200/70">
+                <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Submission Source</span>
+                  <span 
+                    data-testid="detail-complaint-source"
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      selectedComplaint.source === 'ADMIN'
+                        ? 'bg-slate-200 text-slate-800'
+                        : selectedComplaint.source === 'CUSTOMER'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-emerald-100 text-emerald-800'
+                    }`}
+                  >
+                    {selectedComplaint.source === 'ADMIN' ? 'Admin Portal' : selectedComplaint.source === 'CUSTOMER' ? 'Customer Portal' : 'QR Scan'}
+                  </span>
+                </div>
                 <div className="flex items-center gap-2">
                   <User className="w-3.5 h-3.5 text-slate-400" />
                   <span>Reported by: <strong>{selectedComplaint.citizenName || 'Anonymous Citizen'}</strong></span>

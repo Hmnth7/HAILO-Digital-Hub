@@ -89,7 +89,9 @@ interface AppContextType {
     photoUrl?: string;
     citizenName?: string;
     citizenContact?: string;
-  }) => Complaint;
+    source?: 'ADMIN' | 'CUSTOMER' | 'QR_SCAN' | string;
+  }) => Promise<Complaint> | Complaint;
+  syncComplaintsFromBackend: () => Promise<void>;
   clearComplaints: () => void;
   updateComplaintStatus: (
     complaintId: string, 
@@ -237,34 +239,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return initialEVFleet;
   });
 
-  // Helper to detect demo, preloaded, and automated fake complaints
+  // Helper to detect automated fake complaints and obsolete mock injections
   const isDemoComplaintRecord = (c: any): boolean => {
     if (!c || !c.complaintCode) return true;
     if (c.id === 'cmp-000' || c.isDemo) return true;
     const name = (c.citizenName || '').toLowerCase().trim();
-    const desc = (c.description || '').toLowerCase().trim();
     const contact = (c.citizenContact || '').toLowerCase().trim();
     
-    // Filter known fake demo signatures
-    if (name === 'priya sharma (student)' ||
-        name === 'priya sharma' ||
-        name === 'rahul verma' ||
-        name === 'iot ultrasonic monitor (auto-trigger)' ||
-        name === 'sample record' ||
-        name === 'system automation' ||
+    // Only filter automated fake telemetry & sample demo injections
+    if (c.isDemo || 
+        contact === 'telemetry@hailo-system.internal' || 
+        name.includes('auto-trigger') || 
         name.includes('demo flow') ||
-        name.includes('sample') ||
-        name.includes('auto-trigger')) {
-      return true;
-    }
-
-    if (desc.includes('hardware telemetry threshold exceeded') ||
-        desc.includes('the waste bin is full and starting to overflow. please collect as soon as possible') ||
-        desc.includes('the bin is full and needs immediate collection')) {
-      return true;
-    }
-
-    if (contact === 'telemetry@hailo-system.internal') {
+        name === 'sample record') {
       return true;
     }
 
@@ -354,6 +341,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     isSimulating: false
   });
 
+  // Synchronize complaints with shared backend storage across all mobile phones, browsers, and sessions
+  const syncComplaintsFromBackend = async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const res = await fetch('/api/complaints');
+      if (res.ok) {
+        const remoteList = await res.json();
+        if (Array.isArray(remoteList)) {
+          const genuine = remoteList.filter(c => !isDemoComplaintRecord(c));
+          setComplaints(genuine);
+          try {
+            localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(genuine));
+          } catch {}
+        }
+      }
+    } catch {
+      // Offline fallback
+    }
+  };
+
+  useEffect(() => {
+    syncComplaintsFromBackend();
+    const interval = setInterval(syncComplaintsFromBackend, 3000);
+    const handleFocus = () => { syncComplaintsFromBackend(); };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
+    };
+  }, []);
+
   // Persist collections
   useEffect(() => { 
     if (currentUser) {
@@ -400,19 +420,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Auth methods
   const loginAs = (role: 'ADMIN' | 'CUSTOMER', email?: string) => {
     if (role === 'ADMIN') {
-      const admin = initialUsers[0];
-      setCurrentUser({
-        ...admin,
-        email: email || admin.email
-      });
+      const admin = {
+        ...initialUsers[0],
+        email: email || initialUsers[0].email
+      };
+      setCurrentUser(admin);
+      try { localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(admin)); } catch {}
       logActivity('ADMIN_LOGIN', admin.email, 'Admin signed in to operations desk');
       showToast('success', `Signed in as Administrator (${admin.name})`, 'Admin Access Granted');
     } else {
-      const customer = initialUsers[1];
-      setCurrentUser({
-        ...customer,
-        email: email || customer.email
-      });
+      const customer = {
+        ...initialUsers[1],
+        email: email || initialUsers[1].email
+      };
+      setCurrentUser(customer);
+      try { localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(customer)); } catch {}
       showToast('success', `Welcome back, ${customer.name}`, 'Customer Portal Access');
     }
   };
@@ -612,17 +634,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
    * When a customer reports "Bin is Full" or "Overflowing Waste",
    * system automatically creates a collection task and dispatches an available EV.
    */
-  const createComplaint = (data: {
+  const createComplaint = async (data: {
     binCode: string;
     category: ComplaintCategory;
     description: string;
     photoUrl?: string;
     citizenName?: string;
     citizenContact?: string;
-  }): Complaint => {
-    // Generate sequential Complaint Code: CMP-001, CMP-002, etc.
-    const maxNum = complaints.reduce((max, c) => {
-      const match = c.complaintCode.match(/CMP-(\d+)/);
+    source?: 'ADMIN' | 'CUSTOMER' | 'QR_SCAN' | string;
+  }): Promise<Complaint> => {
+    // 1. Fetch current complaints from shared backend if available to ensure strictly sequential, conflict-free CMP code
+    let currentComplaints = complaints;
+    if (typeof window !== 'undefined') {
+      try {
+        const res = await fetch('/api/complaints');
+        if (res.ok) {
+          const remote = await res.json();
+          if (Array.isArray(remote)) {
+            currentComplaints = remote;
+          }
+        }
+      } catch {}
+    }
+
+    const maxNum = currentComplaints.reduce((max, c) => {
+      const match = (c.complaintCode || '').match(/CMP-(\d+)/);
       if (match) {
         const num = parseInt(match[1], 10);
         return num > max ? num : max;
@@ -630,7 +666,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return max;
     }, 0);
 
-    const nextCode = `CMP-${String(maxNum + 1).padStart(3, '0')}`;
+    let nextCode = `CMP-${String(maxNum + 1).padStart(3, '0')}`;
     const priority = getPriorityForCategory(data.category);
     const bin = getBinByCode(data.binCode);
 
@@ -706,6 +742,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
 
+    const detectedSource = data.source || (currentUser?.role === 'ADMIN' ? 'ADMIN' : (currentUser?.role === 'CUSTOMER' ? 'CUSTOMER' : 'QR_SCAN'));
+
     const newComplaint: Complaint = {
       id: `cmp-${Date.now()}`,
       complaintCode: nextCode,
@@ -718,15 +756,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       photoUrl: data.photoUrl,
       priority,
       status: complaintStatus,
+      source: detectedSource,
       assignedEV: assignedEVCode,
       collectionTaskId: taskId,
       createdAt: 'Just now',
+      reportedAt: 'Just now',
       citizenName: data.citizenName || currentUser?.name || 'Anonymous Citizen',
       citizenContact: data.citizenContact || currentUser?.phone || currentUser?.email || 'Not provided'
     };
 
+    // Write to shared backend storage so all devices, sessions, and phones see it
+    if (typeof window !== 'undefined') {
+      try {
+        const postRes = await fetch('/api/complaints', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newComplaint)
+        });
+        if (postRes.ok) {
+          const saved = await postRes.json();
+          if (saved && saved.complaintCode) {
+            newComplaint.complaintCode = saved.complaintCode;
+            newComplaint.id = saved.id || newComplaint.id;
+            nextCode = saved.complaintCode;
+          }
+        }
+      } catch (err) {
+        console.warn('Backend sync warning on complaint creation:', err);
+      }
+    }
+
     setComplaints(prev => {
-      const updated = [newComplaint, ...prev];
+      const updated = [newComplaint, ...prev.filter(c => c.id !== newComplaint.id && c.complaintCode !== nextCode)];
       try {
         localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(updated));
       } catch (e) {
@@ -735,7 +796,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return updated;
     });
 
-    logActivity('COMPLAINT_FILED', nextCode, `Citizen reported ${data.category} on ${data.binCode} (${priority} Priority)`);
+    logActivity('COMPLAINT_FILED', nextCode, `${detectedSource === 'ADMIN' ? 'Admin' : detectedSource === 'CUSTOMER' ? 'Customer' : 'Citizen QR'} reported ${data.category} on ${data.binCode} (${priority} Priority)`);
 
     showToast('success', `Complaint ${nextCode} submitted for ${data.binCode}. Awaiting administrative review.`, 'Report Logged');
 
@@ -884,6 +945,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('info', `Complaint ${targetComplaint.complaintCode} marked as ${status}.`, 'Status Updated');
     }
 
+    // Persist status change to shared backend storage
+    if (typeof window !== 'undefined') {
+      const payload: any = {
+        id: targetComplaint.id,
+        complaintCode: targetComplaint.complaintCode,
+        status,
+        adminNote: options.adminNote !== undefined ? options.adminNote : targetComplaint.adminNote,
+        assignedStaff: resolvedStaffName,
+        assignedStaffId: resolvedStaffId,
+        afterCleaningPhotoUrl: options.afterCleaningPhotoUrl !== undefined ? options.afterCleaningPhotoUrl : targetComplaint.afterCleaningPhotoUrl
+      };
+
+      if (normStatus === 'ACCEPTED') payload.acceptedAt = actualTimestamp;
+      if (normStatus === 'REJECTED') {
+        payload.rejectedAt = actualTimestamp;
+        payload.rejectionReason = options.rejectionReason || 'Rejected by administrator';
+      }
+      if (normStatus === 'ASSIGNED') payload.assignedAt = actualTimestamp;
+      if (normStatus === 'RESOLVED') {
+        payload.resolvedAt = actualTimestamp;
+        payload.resolutionMethod = `Manual Sanitation (${resolvedStaffName})`;
+      }
+
+      fetch('/api/complaints', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).catch(err => {
+        console.warn('Backend sync warning on status update:', err);
+      });
+    }
+
     return true;
   };
 
@@ -929,6 +1022,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return c;
     }));
+
+    if (typeof window !== 'undefined') {
+      fetch('/api/complaints', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: complaintId,
+          complaintCode: complaintId,
+          afterCleaningPhotoUrl: photoDataUrl
+        })
+      }).catch(err => {
+        console.warn('Backend sync warning on photo upload:', err);
+      });
+    }
+
     logActivity('PHOTO_UPLOADED', complaintId, 'After-cleaning verification photograph uploaded.');
     showToast('success', 'After-cleaning verification photograph uploaded successfully.', 'Photo Uploaded');
   };
@@ -1087,6 +1195,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setComplaints([]);
     setCollectionTasks(prev => prev.filter(t => !t.complaintId));
     localStorage.removeItem(STORAGE_KEYS.COMPLAINTS);
+    if (typeof window !== 'undefined') {
+      fetch('/api/complaints', { method: 'DELETE' }).catch(() => {});
+    }
     logActivity('COMPLAINTS_CLEARED', 'Admin', 'Purged all complaint records from storage');
     showToast('info', 'All complaints have been cleared from the database.', 'Complaints Reset');
   };
@@ -1118,6 +1229,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem(STORAGE_KEYS.COMPLAINTS);
     localStorage.removeItem(STORAGE_KEYS.TASKS);
     localStorage.removeItem(STORAGE_KEYS.FEEDBACK);
+    if (typeof window !== 'undefined') {
+      fetch('/api/complaints', { method: 'DELETE' }).catch(() => {});
+    }
     showToast('success', 'Demo data cleared. Complaint records reset to empty.', 'System Reset');
   };
 
@@ -1151,7 +1265,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Filter complaints for current logged-in customer
   const customerComplaints = complaints.filter(c => {
     if (currentUser?.role === 'CUSTOMER') {
-      return c.customerId === currentUser.id || c.citizenName?.includes(currentUser.name);
+      return (
+        c.customerId === currentUser.id ||
+        c.source === 'CUSTOMER' ||
+        (c.citizenName && currentUser.name && c.citizenName.toLowerCase() === currentUser.name.toLowerCase())
+      );
     }
     return true;
   });
@@ -1187,6 +1305,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         getComplaintById,
         createComplaint,
         clearComplaints,
+        syncComplaintsFromBackend,
         updateComplaintStatus,
         acceptComplaint,
         rejectComplaint,

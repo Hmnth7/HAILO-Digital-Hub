@@ -14,7 +14,7 @@ import {
 
 export const ComplaintSuccessPage: React.FC<{ complaintId?: string }> = ({ complaintId: routeId }) => {
   const { params, navigate } = useRouter();
-  const { getComplaintById, complaints, isAdmin } = useApp();
+  const { getComplaintById, complaints, isAdmin, isAuthenticated } = useApp();
 
   // Robust complaint code resolution: props -> params -> URL pathname/hash
   const activeId = React.useMemo(() => {
@@ -148,7 +148,7 @@ export const ComplaintSuccessPage: React.FC<{ complaintId?: string }> = ({ compl
         {/* Action Buttons */}
         <div className="space-y-2 pt-1">
           <button
-            onClick={() => navigate(isAdmin ? '/admin/dashboard' : '/customer/dashboard')}
+            onClick={() => navigate(isAdmin ? '/admin/complaints' : (isAuthenticated ? '/customer/dashboard' : '/report'))}
             className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-colors"
           >
             <span>Back to Home</span>

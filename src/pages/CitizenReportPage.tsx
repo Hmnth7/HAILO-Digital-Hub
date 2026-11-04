@@ -83,7 +83,7 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
     }
   };
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!matchedBin) {
       showToast('error', 'Cannot submit a report for an unregistered dustbin.', 'Invalid Bin ID');
@@ -101,14 +101,17 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
     const hiddenInput = document.getElementById('selected-complaint-category') as HTMLInputElement | null;
     const resolvedCategory = (hiddenInput?.value as ComplaintCategory) || selectedCategory;
 
+    const detectedSource = isAdmin ? 'ADMIN' : (currentUser?.role === 'CUSTOMER' ? 'CUSTOMER' : 'QR_SCAN');
+
     try {
-      const newComplaint = createComplaint({
+      const newComplaint = await createComplaint({
         binCode: matchedBin.binCode,
         category: resolvedCategory,
         description: description.trim() || `${resolvedCategory} reported on ${matchedBin.binCode}.`,
         photoUrl: photoUrl || undefined,
-        citizenName: citizenName.trim() || undefined,
-        citizenContact: citizenContact.trim() || undefined
+        citizenName: citizenName.trim() || currentUser?.name || undefined,
+        citizenContact: citizenContact.trim() || currentUser?.phone || currentUser?.email || undefined,
+        source: detectedSource
       });
 
       setIsSubmitting(false);
