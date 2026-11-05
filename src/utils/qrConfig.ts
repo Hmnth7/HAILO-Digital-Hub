@@ -59,22 +59,24 @@ export function getPublicDomainStatus(): DomainStatus {
       hostname === '0.0.0.0' || 
       hostname === '::1';
 
-    if (!isLocalhost && window.location.origin) {
+    if (window.location.origin) {
       return {
-        isConfigured: true,
+        isConfigured: !isLocalhost,
         url: sanitizeUrl(window.location.origin),
-        source: 'host',
-        message: `Auto-detected from active host (${hostname})`
+        source: isLocalhost ? 'host' : 'host',
+        message: isLocalhost 
+          ? `Active host (${hostname}) • Set custom public domain in QR Management for remote phone scanning` 
+          : `Auto-detected from active host (${hostname})`
       };
     }
   }
 
-  // 4. Public domain is pending configuration
+  // 4. Default production Firebase web app domain
   return {
-    isConfigured: false,
-    url: 'https://hailo-digital-hub.example.com',
+    isConfigured: true,
+    url: 'https://hailo-digital-hub-c33c1.web.app',
     source: 'pending',
-    message: 'Production domain pending configuration. Please enter your live public HTTPS domain.'
+    message: 'Default production Firebase web application domain'
   };
 }
 

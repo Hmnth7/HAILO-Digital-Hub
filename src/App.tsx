@@ -75,6 +75,7 @@ export const App: React.FC = () => {
     if (currentPath.startsWith('/report') && typeof window !== 'undefined') {
       try {
         sessionStorage.setItem('hailo_return_to', currentPath);
+        localStorage.setItem('hailo_return_to', currentPath);
       } catch {}
     }
     return (

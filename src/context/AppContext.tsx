@@ -9,13 +9,16 @@ import {
 import { 
   doc, 
   getDoc, 
+  getDocs,
+  deleteDoc,
   setDoc, 
   updateDoc,
   collection,
   query,
   where,
   onSnapshot,
-  serverTimestamp 
+  serverTimestamp,
+  runTransaction 
 } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { 
@@ -52,7 +55,7 @@ import {
 } from '../data/mockData';
 import { getBinQrUrl, setProductionBaseUrl, getProductionBaseUrl } from '../utils/qrConfig';
 
-export function formatActualTimestamp(date = new Date()): string {
+function formatActualTimestamp(date = new Date()): string {
   return date.toLocaleString('en-IN', {
     day: '2-digit',
     month: 'short',
@@ -314,7 +317,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Helper to detect automated fake complaints and obsolete mock injections
   const isDemoComplaintRecord = (c: any): boolean => {
-    if (!c || !c.complaintCode) return true;
+    if (!c) return true;
+    const code = c.complaintCode || c.id;
+    if (!code) return true;
     if (c.id === 'cmp-000' || c.isDemo) return true;
     const name = (c.citizenName || '').toLowerCase().trim();
     const contact = (c.citizenContact || '').toLowerCase().trim();
@@ -331,22 +336,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return false;
   };
 
-  // Complaints (Strictly genuine citizen reports; initially empty)
-  const [complaints, setComplaints] = useState<Complaint[]>(() => {
-    if (typeof window === 'undefined') return [];
-    const saved = localStorage.getItem(STORAGE_KEYS.COMPLAINTS);
-    if (saved) {
-      try { 
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const genuine = parsed.filter(c => !isDemoComplaintRecord(c));
-          localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(genuine));
-          return genuine;
-        }
-      } catch (e) { /* fallback */ }
+  // Complaints (Strictly genuine reports loaded exclusively from Cloud Firestore; initially empty)
+  const [complaints, setComplaints] = useState<Complaint[]>([]);
+
+  // Purge any legacy cached complaints from browser localStorage on initialization
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem(STORAGE_KEYS.COMPLAINTS);
+      } catch {}
     }
-    return [];
-  });
+  }, []);
 
   // Registered Cleaning Staff Roster
   const [registeredStaff, setRegisteredStaff] = useState<CleaningStaff[]>(() => {
@@ -415,69 +415,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   // Synchronize complaints with shared backend storage across all mobile phones, browsers, and sessions
+  // Legacy syncComplaintsFromBackend stub kept as no-op for type interface compatibility
   const syncComplaintsFromBackend = async () => {
-    if (typeof window === 'undefined') return;
-    try {
-      const res = await fetch('/api/complaints');
-      if (res.ok) {
-        const remoteList = await res.json();
-        if (Array.isArray(remoteList)) {
-          const genuine = remoteList.filter(c => !isDemoComplaintRecord(c));
-          // Only use local fallback if not yet receiving Firestore snapshot
-          if (!currentUser) {
-            setComplaints(genuine);
-            try {
-              localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(genuine));
-            } catch {}
-          }
-        }
-      }
-    } catch {
-      // Offline fallback
-    }
+    // No-op: Cloud Firestore is the exclusive real-time single source of truth
   };
 
-  // Real-time Cloud Firestore synchronization across devices
+  // Cloud Firestore is the EXCLUSIVE SINGLE SOURCE OF TRUTH for Complaints across all devices
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      console.log(`[HAILO ${new Date().toISOString()}] No authenticated user session - complaints reset to empty.`);
+      setComplaints([]);
+      return;
+    }
 
     let unsubscribe: (() => void) | undefined;
 
     if (currentUser.role === 'ADMIN') {
-      // Admin: Real-time sync for all complaints
+      console.log(`[HAILO ${new Date().toISOString()}] Attaching Admin Firestore onSnapshot listener for /complaints (UID: ${currentUser.id})...`);
       const complaintsCol = collection(db, 'complaints');
       unsubscribe = onSnapshot(
         complaintsCol,
         (snapshot) => {
+          console.log(`[HAILO ${new Date().toISOString()}] [FIRESTORE onSnapshot ADMIN] Received snapshot with ${snapshot.size} complaint document(s).`);
           const list: Complaint[] = [];
           snapshot.forEach((docSnap) => {
             const data = docSnap.data() as Complaint;
-            if (data && !isDemoComplaintRecord(data)) {
+            if (data && !isDemoComplaintRecord({ ...data, id: docSnap.id, complaintCode: data.complaintCode || docSnap.id })) {
               list.push({
                 ...data,
-                id: data.id || docSnap.id,
+                id: docSnap.id,
                 complaintCode: data.complaintCode || docSnap.id
               });
             }
           });
 
+          // Sort by sequential CMP number descending (newest first)
           list.sort((a, b) => {
             const numA = parseInt((a.complaintCode || '').replace(/\D/g, '') || '0', 10);
             const numB = parseInt((b.complaintCode || '').replace(/\D/g, '') || '0', 10);
             return numB - numA;
           });
 
+          console.log(`[HAILO ${new Date().toISOString()}] [FIRESTORE onSnapshot ADMIN] Setting Admin complaints state (${list.length} genuine complaint(s)):`, list.map(c => `${c.complaintCode} [${c.binCode} - ${c.status}]`));
           setComplaints(list);
-          try {
-            localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(list));
-          } catch {}
         },
         (err) => {
-          console.error('Firestore complaints onSnapshot error for Admin:', err);
+          console.error(`[HAILO ${new Date().toISOString()}] [FIRESTORE onSnapshot ADMIN ERROR]`, err);
         }
       );
     } else if (currentUser.role === 'CUSTOMER') {
-      // Customer: Real-time sync for complaints belonging to this customer
+      console.log(`[HAILO ${new Date().toISOString()}] Attaching Customer Firestore onSnapshot listener for customerId: ${currentUser.id}...`);
       const complaintsQuery = query(
         collection(db, 'complaints'),
         where('customerId', '==', currentUser.id)
@@ -486,13 +473,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubscribe = onSnapshot(
         complaintsQuery,
         (snapshot) => {
+          console.log(`[HAILO ${new Date().toISOString()}] [FIRESTORE onSnapshot CUSTOMER] Received snapshot with ${snapshot.size} complaint document(s).`);
           const list: Complaint[] = [];
           snapshot.forEach((docSnap) => {
             const data = docSnap.data() as Complaint;
-            if (data && !isDemoComplaintRecord(data)) {
+            if (data && !isDemoComplaintRecord({ ...data, id: docSnap.id, complaintCode: data.complaintCode || docSnap.id })) {
               list.push({
                 ...data,
-                id: data.id || docSnap.id,
+                id: docSnap.id,
                 complaintCode: data.complaintCode || docSnap.id
               });
             }
@@ -504,41 +492,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return numB - numA;
           });
 
+          console.log(`[HAILO ${new Date().toISOString()}] [FIRESTORE onSnapshot CUSTOMER] Setting Customer complaints state (${list.length} complaint(s)):`, list.map(c => `${c.complaintCode} [${c.binCode} - ${c.status}]`));
           setComplaints(list);
-          try {
-            localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(list));
-          } catch {}
         },
         (err) => {
-          console.error('Firestore complaints onSnapshot error for Customer:', err);
+          console.error(`[HAILO ${new Date().toISOString()}] [FIRESTORE onSnapshot CUSTOMER ERROR]`, err);
         }
       );
     }
 
     return () => {
       if (unsubscribe) {
+        console.log(`[HAILO ${new Date().toISOString()}] Cleanly unsubscribed active Firestore complaints listener.`);
         unsubscribe();
       }
     };
   }, [currentUser?.id, currentUser?.role]);
 
-  useEffect(() => {
-    syncComplaintsFromBackend();
-    const interval = setInterval(syncComplaintsFromBackend, 3000);
-    const handleFocus = () => { syncComplaintsFromBackend(); };
-    window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleFocus);
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleFocus);
-    };
-  }, []);
-
-  // Persist collections (authentication & role are managed by Firebase Auth/Firestore, NOT localStorage)
+  // Persist non-complaint collections (complaints are strictly managed in Cloud Firestore, NEVER localStorage)
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.BINS, JSON.stringify(bins)); }, [bins]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.EV, JSON.stringify(evFleet)); }, [evFleet]);
-  useEffect(() => { localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(complaints)); }, [complaints]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.TASKS, JSON.stringify(collectionTasks)); }, [collectionTasks]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.FEEDBACK, JSON.stringify(feedbacks)); }, [feedbacks]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.ACTIVITY, JSON.stringify(activityLogs)); }, [activityLogs]);
@@ -896,30 +869,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     citizenContact?: string;
     source?: 'ADMIN' | 'CUSTOMER' | 'QR_SCAN' | string;
   }): Promise<Complaint> => {
-    // 1. Fetch current complaints from shared backend if available to ensure strictly sequential, conflict-free CMP code
-    let currentComplaints = complaints;
-    if (typeof window !== 'undefined') {
-      try {
-        const res = await fetch('/api/complaints');
-        if (res.ok) {
-          const remote = await res.json();
-          if (Array.isArray(remote)) {
-            currentComplaints = remote;
-          }
+    // Atomic sequential tracking number from Firestore counter, with local fallback
+    let nextNum: number = 8;
+    try {
+      const counterRef = doc(db, 'counters', 'complaints');
+      nextNum = await runTransaction(db, async (t) => {
+        const snap = await t.get(counterRef);
+        let current = 7;
+        if (snap.exists() && typeof snap.data().currentNumber === 'number') {
+          current = snap.data().currentNumber;
         }
-      } catch {}
+        const next = current + 1;
+        t.set(counterRef, { currentNumber: next }, { merge: true });
+        return next;
+      });
+    } catch (counterErr) {
+      console.warn(`[HAILO ${new Date().toISOString()}] Counter read failed, calculating from loaded complaints:`, counterErr);
+      const maxNum = complaints.reduce((max, c) => {
+        const match = (c.complaintCode || '').match(/CMP-(\d+)/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          return num > max ? num : max;
+        }
+        return max;
+      }, 7);
+      nextNum = maxNum + 1;
     }
 
-    const maxNum = currentComplaints.reduce((max, c) => {
-      const match = (c.complaintCode || '').match(/CMP-(\d+)/);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        return num > max ? num : max;
-      }
-      return max;
-    }, 0);
-
-    let nextCode = `CMP-${String(maxNum + 1).padStart(3, '0')}`;
+    const nextCode = `CMP-${String(nextNum).padStart(3, '0')}`;
     const priority = getPriorityForCategory(data.category);
     const bin = getBinByCode(data.binCode);
 
@@ -999,10 +976,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const actualTimestamp = formatActualTimestamp();
 
+    // Authenticated customer UID resolution (must match request.auth.uid for security rules)
+    const authUser = auth.currentUser;
+    const effectiveCustomerId = authUser?.uid || currentUser?.id;
+
     const newComplaint: Complaint = {
-      id: `cmp-${Date.now()}`,
+      id: nextCode,
       complaintCode: nextCode,
-      customerId: currentUser?.role === 'CUSTOMER' ? currentUser.id : undefined,
+      customerId: effectiveCustomerId,
       binId: bin ? bin.id : `bin-${data.binCode.toLowerCase()}`,
       binCode: data.binCode,
       location: bin ? bin.location : 'Campus Grounds',
@@ -1016,15 +997,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       collectionTaskId: taskId,
       createdAt: actualTimestamp,
       reportedAt: actualTimestamp,
-      citizenName: data.citizenName || currentUser?.name || 'Anonymous Citizen',
-      citizenContact: data.citizenContact || currentUser?.phone || currentUser?.email || 'Not provided'
+      citizenName: data.citizenName || currentUser?.name || authUser?.displayName || 'Citizen',
+      citizenContact: data.citizenContact || currentUser?.phone || currentUser?.email || authUser?.email || 'Not provided'
     };
 
-    // 1. Write to Cloud Firestore so all devices, sessions, and phones see it immediately
+    // Write directly to Cloud Firestore as the single source of truth
     try {
+      console.log(`[HAILO ${new Date().toISOString()}] Saving genuine complaint ${nextCode} to Cloud Firestore (customerId: ${effectiveCustomerId})...`);
       const complaintDocRef = doc(db, 'complaints', nextCode);
       const firestorePayload = cleanFirestoreData({
-        id: newComplaint.id,
+        id: nextCode,
         complaintCode: nextCode,
         customerId: newComplaint.customerId,
         binId: newComplaint.binId,
@@ -1044,41 +1026,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         photoUrl: newComplaint.photoUrl
       });
       await setDoc(complaintDocRef, firestorePayload);
-      console.log(`Complaint ${nextCode} successfully stored in Cloud Firestore.`);
+      console.log(`[HAILO ${new Date().toISOString()}] Complaint ${nextCode} successfully stored in Cloud Firestore.`);
     } catch (fsErr) {
-      console.error('Failed to write complaint to Cloud Firestore:', fsErr);
+      console.error(`[HAILO ${new Date().toISOString()}] Failed to write complaint to Cloud Firestore:`, fsErr);
+      throw fsErr;
     }
 
-    // 2. Write to local backend storage for dev parity
-    if (typeof window !== 'undefined') {
-      try {
-        const postRes = await fetch('/api/complaints', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newComplaint)
-        });
-        if (postRes.ok) {
-          const saved = await postRes.json();
-          if (saved && saved.complaintCode) {
-            newComplaint.complaintCode = saved.complaintCode;
-            newComplaint.id = saved.id || newComplaint.id;
-            nextCode = saved.complaintCode;
-          }
-        }
-      } catch (err) {
-        console.warn('Backend sync warning on complaint creation:', err);
-      }
-    }
-
-    setComplaints(prev => {
-      const updated = [newComplaint, ...prev.filter(c => c.id !== newComplaint.id && c.complaintCode !== nextCode)];
-      try {
-        localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(updated));
-      } catch (e) {
-        console.error('Storage error syncing complaints', e);
-      }
-      return updated;
-    });
+    setComplaints(prev => [newComplaint, ...prev.filter(c => c.id !== nextCode && c.complaintCode !== nextCode)]);
 
     logActivity('COMPLAINT_FILED', nextCode, `${detectedSource === 'ADMIN' ? 'Admin' : detectedSource === 'CUSTOMER' ? 'Customer' : 'Citizen QR'} reported ${data.category} on ${data.binCode} (${priority} Priority)`);
 
@@ -1246,43 +1200,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         resolvedAt: normStatus === 'RESOLVED' ? actualTimestamp : targetComplaint.resolvedAt,
         resolutionMethod: normStatus === 'RESOLVED' ? `Manual Sanitation (${resolvedStaffName || 'Cleaning Staff'})` : targetComplaint.resolutionMethod
       });
-      updateDoc(complaintDocRef, firestoreUpdatePayload).catch(fsErr => {
-        console.error('Firestore status update error:', fsErr);
+      console.log(`[HAILO ${new Date().toISOString()}] Updating complaint ${targetDocId} status to ${status} in Cloud Firestore...`);
+      updateDoc(complaintDocRef, firestoreUpdatePayload).then(() => {
+        console.log(`[HAILO ${new Date().toISOString()}] Complaint ${targetDocId} status successfully updated to ${status} in Cloud Firestore.`);
+      }).catch(fsErr => {
+        console.error(`[HAILO ${new Date().toISOString()}] Firestore status update error for ${targetDocId}:`, fsErr);
       });
     } catch (e) {
       console.error('Failed to update complaint in Firestore:', e);
-    }
-
-    // Persist status change to shared backend storage
-    if (typeof window !== 'undefined') {
-      const payload: any = {
-        id: targetComplaint.id,
-        complaintCode: targetComplaint.complaintCode,
-        status,
-        adminNote: options.adminNote !== undefined ? options.adminNote : targetComplaint.adminNote,
-        assignedStaff: resolvedStaffName || undefined,
-        assignedStaffId: resolvedStaffId || undefined,
-        afterCleaningPhotoUrl: options.afterCleaningPhotoUrl !== undefined ? options.afterCleaningPhotoUrl : targetComplaint.afterCleaningPhotoUrl
-      };
-
-      if (normStatus === 'ACCEPTED') payload.acceptedAt = actualTimestamp;
-      if (normStatus === 'REJECTED') {
-        payload.rejectedAt = actualTimestamp;
-        payload.rejectionReason = options.rejectionReason || 'Rejected by administrator';
-      }
-      if (normStatus === 'ASSIGNED') payload.assignedAt = actualTimestamp;
-      if (normStatus === 'RESOLVED') {
-        payload.resolvedAt = actualTimestamp;
-        payload.resolutionMethod = `Manual Sanitation (${resolvedStaffName || 'Cleaning Staff'})`;
-      }
-
-      fetch('/api/complaints', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      }).catch(err => {
-        console.warn('Backend sync warning on status update:', err);
-      });
     }
 
     return true;
@@ -1331,30 +1256,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return c;
     }));
 
-    // Update in Cloud Firestore
+    // Update directly in Cloud Firestore
     try {
       const targetComplaint = complaints.find(c => c.id === complaintId || c.complaintCode === complaintId);
       const targetDocId = targetComplaint?.complaintCode || targetComplaint?.id || complaintId;
       const complaintDocRef = doc(db, 'complaints', targetDocId);
-      updateDoc(complaintDocRef, { afterCleaningPhotoUrl: photoDataUrl }).catch(err => {
-        console.error('Firestore photo upload error:', err);
+      console.log(`[HAILO ${new Date().toISOString()}] Uploading verification photo for ${targetDocId} to Cloud Firestore...`);
+      updateDoc(complaintDocRef, { afterCleaningPhotoUrl: photoDataUrl }).then(() => {
+        console.log(`[HAILO ${new Date().toISOString()}] Verification photo stored in Cloud Firestore for ${targetDocId}.`);
+      }).catch(err => {
+        console.error(`[HAILO ${new Date().toISOString()}] Firestore photo upload error:`, err);
       });
     } catch (e) {
       console.error('Failed to update photo in Firestore:', e);
-    }
-
-    if (typeof window !== 'undefined') {
-      fetch('/api/complaints', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: complaintId,
-          complaintCode: complaintId,
-          afterCleaningPhotoUrl: photoDataUrl
-        })
-      }).catch(err => {
-        console.warn('Backend sync warning on photo upload:', err);
-      });
     }
 
     logActivity('PHOTO_UPLOADED', complaintId, 'After-cleaning verification photograph uploaded.');
@@ -1510,16 +1424,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('success', 'System preferences saved successfully.', 'Settings Saved');
   };
 
-  // Clear all complaints from database and storage
-  const clearComplaints = () => {
+  // Clear all complaints from Cloud Firestore and state
+  const clearComplaints = async () => {
+    try {
+      console.log(`[HAILO ${new Date().toISOString()}] Admin initiated complaint purge from Cloud Firestore...`);
+      const snap = await getDocs(collection(db, 'complaints'));
+      const deletions = snap.docs.map(d => deleteDoc(d.ref));
+      await Promise.all(deletions);
+      console.log(`[HAILO ${new Date().toISOString()}] Successfully deleted ${snap.size} complaint(s) from Cloud Firestore.`);
+    } catch (err) {
+      console.error('Failed to clear complaints from Cloud Firestore:', err);
+    }
     setComplaints([]);
     setCollectionTasks(prev => prev.filter(t => !t.complaintId));
-    localStorage.removeItem(STORAGE_KEYS.COMPLAINTS);
-    if (typeof window !== 'undefined') {
-      fetch('/api/complaints', { method: 'DELETE' }).catch(() => {});
-    }
-    logActivity('COMPLAINTS_CLEARED', 'Admin', 'Purged all complaint records from storage');
-    showToast('info', 'All complaints have been cleared from the database.', 'Complaints Reset');
+    logActivity('COMPLAINTS_CLEARED', 'Admin', 'Purged all complaint records from Cloud Firestore');
+    showToast('info', 'All complaints have been cleared from Cloud Firestore.', 'Complaints Reset');
   };
 
   // Hardware Simulation fill level trigger (Does NOT create complaints)
@@ -1546,12 +1465,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       targetBinCode: 'BIN-003',
       isSimulating: false
     });
-    localStorage.removeItem(STORAGE_KEYS.COMPLAINTS);
     localStorage.removeItem(STORAGE_KEYS.TASKS);
     localStorage.removeItem(STORAGE_KEYS.FEEDBACK);
-    if (typeof window !== 'undefined') {
-      fetch('/api/complaints', { method: 'DELETE' }).catch(() => {});
-    }
     showToast('success', 'Demo data cleared. Complaint records reset to empty.', 'System Reset');
   };
 

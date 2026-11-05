@@ -61,6 +61,7 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
     } else {
       try {
         sessionStorage.setItem('hailo_return_to', `/report/${activeCode}`);
+        localStorage.setItem('hailo_return_to', `/report/${activeCode}`);
       } catch {}
     }
   }, [activeCode, navigate]);
@@ -71,6 +72,7 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
   const [citizenName, setCitizenName] = useState(currentUser?.name || '');
   const [citizenContact, setCitizenContact] = useState(currentUser?.email || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (currentUser) {
@@ -149,6 +151,7 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
     const isFromQr = !!(routeBinCode || params.binCode);
     const detectedSource = isAdmin ? 'ADMIN' : (isFromQr ? 'QR_SCAN' : (currentUser?.role === 'CUSTOMER' ? 'CUSTOMER' : 'QR_SCAN'));
 
+    setSubmissionError(null);
     try {
       const newComplaint = await createComplaint({
         binCode: matchedBin.binCode,
@@ -162,10 +165,12 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
 
       setIsSubmitting(false);
       navigate(`/report/success/${newComplaint.complaintCode}`);
-    } catch (err) {
-      console.error('Failed to submit complaint', err);
+    } catch (err: any) {
+      console.error('Failed to submit complaint to Cloud Firestore:', err);
       setIsSubmitting(false);
-      showToast('error', 'Failed to submit report. Please try again.', 'Submission Error');
+      const errMsg = err?.message || 'Database rejected report submission. Please verify connectivity and try again.';
+      setSubmissionError(errMsg);
+      showToast('error', errMsg, 'Submission Rejected');
     }
   };
 
@@ -513,6 +518,17 @@ export const CitizenReportPage: React.FC<{ binCode?: string }> = ({ binCode: rou
                   </div>
                 </div>
               </div>
+
+              {/* Submission Error Banner */}
+              {submissionError && (
+                <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold block">Submission Rejected</span>
+                    <span className="text-[11px] text-red-700">{submissionError}</span>
+                  </div>
+                </div>
+              )}
 
               {/* Submit Button */}
               <button

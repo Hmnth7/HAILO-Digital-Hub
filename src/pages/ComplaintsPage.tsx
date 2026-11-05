@@ -64,7 +64,7 @@ export const ComplaintsPage: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Always derive selectedComplaint directly from fresh context complaints without selecting fake complaints
-  const selectedComplaint = complaints.find(c => c.id === selectedComplaintId) || (complaints.length > 0 ? complaints[0] : null);
+  const selectedComplaint = complaints.find(c => c.id === selectedComplaintId || c.complaintCode === selectedComplaintId) || (complaints.length > 0 ? complaints[0] : null);
 
   useEffect(() => {
     if (selectedComplaint) {
@@ -377,7 +377,7 @@ export const ComplaintsPage: React.FC = () => {
                         key={c.id}
                         data-complaint-row={c.complaintCode}
                         onClick={() => {
-                          setSelectedComplaintId(c.id);
+                          setSelectedComplaintId(c.complaintCode || c.id);
                           setAdminNoteInput(c.adminNote || '');
                           setSelectedStaffCode(c.assignedStaffId || '');
                           setResolutionError(null);

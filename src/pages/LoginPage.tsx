@@ -61,7 +61,9 @@ export const LoginPage: React.FC = () => {
   const { navigate } = useRouter();
 
   // Scanned dustbin return path detection (when a citizen scans a physical QR code)
-  const returnToPath = typeof window !== 'undefined' ? sessionStorage.getItem('hailo_return_to') : null;
+  const returnToPath = typeof window !== 'undefined' 
+    ? (sessionStorage.getItem('hailo_return_to') || localStorage.getItem('hailo_return_to')) 
+    : null;
   const returnBinCode = React.useMemo(() => {
     if (!returnToPath) return null;
     const match = returnToPath.match(/\/report\/([A-Za-z0-9_-]+)/i);
@@ -104,9 +106,10 @@ export const LoginPage: React.FC = () => {
     try {
       await loginWithFirebase(adminEmail, adminPassword, 'ADMIN');
       try {
-        const returnTo = sessionStorage.getItem('hailo_return_to');
+        const returnTo = sessionStorage.getItem('hailo_return_to') || localStorage.getItem('hailo_return_to');
         if (returnTo && returnTo.startsWith('/report')) {
           sessionStorage.removeItem('hailo_return_to');
+          localStorage.removeItem('hailo_return_to');
           navigate(returnTo);
           return;
         }
@@ -121,9 +124,10 @@ export const LoginPage: React.FC = () => {
 
   const redirectAfterCustomerAuth = () => {
     try {
-      const returnTo = sessionStorage.getItem('hailo_return_to');
+      const returnTo = sessionStorage.getItem('hailo_return_to') || localStorage.getItem('hailo_return_to');
       if (returnTo && returnTo.startsWith('/report')) {
         sessionStorage.removeItem('hailo_return_to');
+        localStorage.removeItem('hailo_return_to');
         navigate(returnTo);
         return;
       }
